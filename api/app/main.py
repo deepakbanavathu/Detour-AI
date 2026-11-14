@@ -10,11 +10,11 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import brief as briefmod, gazetteer, maps, pipeline, profiles, routing, zones
+from . import brief as briefmod, gazetteer, maps, packs, pipeline, profiles, routing, zones
 from .config import ADMIN_TOKEN, CITY_ID
 from .db import close_pool, conn, open_pool
 
@@ -78,13 +78,27 @@ def brief_page():
     return FileResponse(STATIC / "brief.html")
 
 
+@app.get("/card/{route_id}")
+def card_page(route_id: int):
+    """The offline route card for one saved team route."""
+    return FileResponse(STATIC / "card.html")
+
+
+@app.get("/sw.js")
+def service_worker():
+    # served from the root so it can control /card/*; never cached by the browser's HTTP cache
+    return Response((STATIC / "sw.js").read_text(), media_type="application/javascript",
+                    headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
+
+
 @app.get("/healthz")
 def healthz():
     with conn() as c:
         n = c.execute("SELECT count(*) AS n FROM net.edge").fetchone()["n"]
         g = c.execute("SELECT count(*) AS n FROM geo.gazetteer").fetchone()["n"]
         z = c.execute("SELECT count(*) AS n FROM geo.zone_of_avoidance WHERE status IN ('ACTIVE','DECAYING') AND valid_to > now()").fetchone()["n"]
-    return {"ok": True, "edges": n, "gazetteer": g, "active_zones": z, "profiles": profiles.codes()}
+        r = c.execute("SELECT count(*) AS n FROM ingest.review WHERE status = 'OPEN'").fetchone()["n"]
+    return {"ok": True, "edges": n, "gazetteer": g, "active_zones": z, "open_reviews": r, "profiles": profiles.codes()}
 
 
 # ---------------------------------------------------------------- routing
@@ -408,9 +422,19 @@ def sources():
             "SELECT source_id, kind, name, handle, cred, interval_s, enabled, last_polled, last_ok, last_error, items_total, zones_total "
             "FROM ingest.source WHERE city_id = %s ORDER BY kind, name", (CITY_ID,)).fetchall()
     for r in rows:
-        r["state"] = ("off" if not r["enabled"] else "waiting for first poll" if r["last_polled"] is None
-                      else "needs a key" if (r["last_error"] or "").startswith("skipped") else "failing" if r["last_error"] else "ok")
+        r["state"] = source_state(r)
     return rows
+
+
+def source_state(r: dict) -> str:
+    """One word for the console: off, waiting for first poll, needs a key, failing, ok."""
+    if not r["enabled"]:
+        return "off"
+    if r["last_polled"] is None:
+        return "waiting for first poll"
+    if (r["last_error"] or "").startswith("skipped"):
+        return "needs a key"
+    return "failing" if r["last_error"] else "ok"
 
 
 @app.post("/v1/sources")
@@ -442,6 +466,18 @@ def source_enable(source_id: int, enabled: bool, x_admin_token: Annotated[str | 
     if not n:
         raise HTTPException(404, "source not found")
     return {"source_id": source_id, "enabled": enabled}
+
+
+@app.post("/v1/sources/{source_id}/poll-now")
+def source_poll_now(source_id: int, x_admin_token: Annotated[str | None, Header()] = None):
+    """Make the worker check this source on its next tick (within 15 seconds)."""
+    _admin(x_admin_token)
+    with conn() as c:
+        n = c.execute("UPDATE ingest.source SET last_polled = NULL WHERE source_id = %s AND city_id = %s AND enabled", (source_id, CITY_ID)).rowcount
+        c.commit()
+    if not n:
+        raise HTTPException(404, "source not found or paused")
+    return {"source_id": source_id, "queued": True}
 
 
 @app.get("/v1/review")
@@ -485,3 +521,25 @@ def review_resolve(review_id: int, body: ReviewIn, x_admin_token: Annotated[str 
         c.commit()
         out = pipeline.process_sentence(c, r["msg_id"], r["sentence"], float(r["source_cred"]), r["ts_published"], commit=True)
     return {"review_id": review_id, "status": "RESOLVED", "rerun": {"ok": out.get("ok"), "zone": (out.get("zone") or {}).get("zone_id"), "reason": out.get("reason")}}
+
+
+# ---------------------------------------------------------------- route packs (offline guidance)
+
+@app.get("/v1/packs/{route_id}")
+def pack_get(route_id: int, rebuild: bool = False):
+    """Up to three pre-computed routes for a saved team route, with turn lists and decision points."""
+    try:
+        return packs.get(route_id, rebuild)
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from None
+    except (ValueError, routing.NoRoute) as e:
+        raise HTTPException(409, str(e)) from None
+
+
+@app.get("/v1/packs/{route_id}/status")
+def pack_status(route_id: int):
+    """Which of the pack's routes is best right now; stale=true means fetch the pack again."""
+    try:
+        return packs.status(route_id)
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from None

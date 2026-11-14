@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Route card · DetourAI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;800&display=swap" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js"></script>
+<style>
+:root{ --asphalt:#2B2F33; --ink:#2B2F33; --ink-2:#5B636B; --ground:#EEF0F1; --surface:#FFFFFF; --rule:#D5D9DC;
+  --divert:#F2B705; --divert-ink:#1E1A05; --inform:#1456A8; --stop:#C8322B; --go:#1E7B4A;
+  --r-a:#1456A8; --r-b:#1E7B4A; --r-c:#6B3FA0; --font:"Overpass","Segoe UI",system-ui,sans-serif; }
+@media (prefers-color-scheme: dark){ :root{ color-scheme:dark; --ink:#ECEEEF; --ink-2:#A9B1B8; --ground:#23272B; --surface:#2E3338; --rule:#454C53;
+  --inform:#4C8FE0; --stop:#E5665F; --go:#4FB380; --r-a:#4C8FE0; --r-b:#4FB380; --r-c:#A27BD6; } }
+*{box-sizing:border-box} [hidden]{display:none!important} html,body{height:100%;margin:0}
+body{font:400 15px/1.45 var(--font);color:var(--ink);background:var(--ground);font-variant-numeric:tabular-nums;display:grid;grid-template-rows:auto auto 1fr auto;grid-template-columns:minmax(0,1fr)}
+button{font:inherit;color:inherit} :focus-visible{outline:3px solid var(--divert);outline-offset:2px}
+.top{background:var(--asphalt);color:#fff;padding:calc(10px + env(safe-area-inset-top,0px)) 14px 10px;display:flex;align-items:center;gap:10px}
+.top h1{margin:0;font-size:17px;font-weight:800;line-height:1.15;flex:1;min-width:0} .top h1 small{display:block;font-weight:400;font-size:12.5px;color:#C9CED2}
+.state{font-size:12.5px;padding:3px 8px;border-radius:999px;border:1px solid #6A737B;white-space:nowrap}
+.state.off{background:var(--divert);color:var(--divert-ink);border-color:var(--divert);font-weight:600}
+.next{background:var(--surface);border-bottom:1px solid var(--rule);padding:12px 14px}
+.next .dist{font-size:34px;font-weight:800;line-height:1} .next .what{font-size:19px;font-weight:600;margin-top:2px}
+.next .then{color:var(--ink-2);font-size:13.5px;margin-top:4px}
+.alert{background:var(--divert);color:var(--divert-ink);border-top:2px solid var(--divert-ink);border-bottom:2px solid var(--divert-ink);padding:10px 14px;display:flex;gap:10px;align-items:center;font-weight:600}
+.alert button{margin-left:auto;background:var(--divert-ink);color:#fff;border:0;border-radius:6px;padding:7px 12px;font-weight:600;cursor:pointer;white-space:nowrap}
+#map{min-height:0}
+.bar{background:var(--surface);border-top:1px solid var(--rule);padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px));display:flex;gap:6px;align-items:stretch}
+.rt{flex:1;min-width:0;border:1px solid var(--rule);border-left:6px solid var(--c);background:var(--surface);border-radius:3px;padding:6px 8px;text-align:left;cursor:pointer}
+.rt b{display:block;font-size:16px;font-weight:800;line-height:1.15;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .rt span{font-size:12px;color:var(--ink-2);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rt[aria-pressed="true"]{background:var(--ground);box-shadow:inset 0 0 0 2px var(--c)}
+.go{flex:none;border:0;background:var(--inform);color:#fff;border-radius:6px;padding:0 14px;font-weight:600;cursor:pointer}
+.me{width:18px;height:18px;border-radius:50%;background:var(--inform);border:3px solid #fff;box-shadow:0 0 0 2px var(--inform)}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1 id="name">Route card<small id="sub"></small></h1>
+  <span class="state" id="state">Loading</span>
+</header>
+<section class="next" aria-live="polite">
+  <div class="dist" id="dist">–</div>
+  <div class="what" id="what">Finding the route</div>
+  <div class="then" id="then"></div>
+</section>
+<div id="map" aria-label="Map"></div>
+<div>
+  <div class="alert" id="alert" role="alert" hidden><span id="alert-text"></span><button id="alert-do">Switch</button></div>
+  <nav class="bar" id="bar" aria-label="Routes"></nav>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const COLOR = {A:"--r-a", B:"--r-b", C:"--r-c"};
+const params = new URLSearchParams(location.search);
+const routeId = (location.pathname.match(/\/card\/(\d+)/) || [])[1] || params.get("id");
+const CRAWL_KMH = 8, CRAWL_MS = 4 * 60e3, AHEAD_M = 1500, OFF_ROUTE_M = 60;
+
+/* ---------- geometry on the phone: no server needed ---------- */
+const R = 6371000, rad = d => d * Math.PI / 180;
+function hav(a, b){ const dy = rad(b[1]-a[1]), dx = rad(b[0]-a[0]); const s = Math.sin(dy/2)**2 + Math.cos(rad(a[1]))*Math.cos(rad(b[1]))*Math.sin(dx/2)**2; return 2*R*Math.asin(Math.sqrt(s)); }
+function measure(coords){ const cum = [0]; for (let i = 1; i < coords.length; i++) cum.push(cum[i-1] + hav(coords[i-1], coords[i])); return cum; }
+function project(coords, cum, p){            // nearest point on the line: metres along it and metres off it
+  let best = {along:0, off:Infinity};
+  const kx = Math.cos(rad(p[1])) * 111320, ky = 110540;
+  for (let i = 1; i < coords.length; i++) {
+    const ax = (coords[i-1][0]-p[0])*kx, ay = (coords[i-1][1]-p[1])*ky, bx = (coords[i][0]-p[0])*kx, by = (coords[i][1]-p[1])*ky;
+    const dx = bx-ax, dy = by-ay, len2 = dx*dx + dy*dy; const t = len2 ? Math.max(0, Math.min(1, -(ax*dx + ay*dy)/len2)) : 0;
+    const off = Math.hypot(ax + t*dx, ay + t*dy);
+    if (off < best.off) best = {along: cum[i-1] + t*(cum[i]-cum[i-1]), off};
+  }
+  return best;
+}
+function pointAt(coords, cum, m){ m = Math.max(0, Math.min(m, cum[cum.length-1]));
+  for (let i = 1; i < coords.length; i++) if (cum[i] >= m) { const t = (m - cum[i-1]) / ((cum[i]-cum[i-1]) || 1); return [coords[i-1][0] + t*(coords[i][0]-coords[i-1][0]), coords[i-1][1] + t*(coords[i][1]-coords[i-1][1])]; }
+  return coords[coords.length-1]; }
+const fmt = m => m >= 1000 ? (m/1000).toFixed(1) + " km" : Math.max(10, Math.round(m/10)*10) + " m";
+
+/* ---------- preview pack, used only when nothing is saved and the API is unreachable ---------- */
+function demoPack(){
+  // A and B share the first leg to a junction, so the pack has a real decision point to switch at
+  const A = [[78.3908,17.4486],[78.3962,17.4452],[78.4060,17.4476],[78.4095,17.4489],[78.4190,17.4441],[78.4262,17.4380],[78.4335,17.4322],[78.4398,17.4251],[78.4441,17.4188],[78.4480,17.4126]];
+  const B = [[78.3908,17.4486],[78.3962,17.4452],[78.4020,17.4405],[78.4058,17.4352],[78.4096,17.4298],[78.4172,17.4252],[78.4262,17.4214],[78.4349,17.4176],[78.4416,17.4141],[78.4480,17.4126]];
+  const turns = (c, names) => { const cum = measure(c); return names.map(([i, text, road]) => ({at_m: Math.round(cum[i]), text, road, lat: c[i][1], lng: c[i][0]})).concat([{at_m: Math.round(cum[cum.length-1]), text:"Arrive", road:null}]); };
+  return {route_id:0, name:"Office run", profile:"4W_HATCH", version:"preview", built_at:new Date().toISOString(), usual_minutes:21, best:"A",
+    from:{lat:17.4486,lng:78.3908,label:"Madhapur"}, to:{lat:17.4126,lng:78.4480,label:"Banjara Hills"},
+    routes:{
+      A:{label:"A", minutes:33, km:10.9, via:["Hitec City Main Road","Road No 1 Banjara Hills"], geometry:{type:"LineString",coordinates:A}, decision_point:null,
+         turns:turns(A, [[0,"Start on Hitec City Main Road","Hitec City Main Road"],[4,"Turn right onto Road No 1 Banjara Hills","Road No 1 Banjara Hills"],[7,"Bear right onto Road No 12","Road No 12"]])},
+      B:{label:"B", minutes:36, km:8.4, via:["Road No 36","Road No 45"], geometry:{type:"LineString",coordinates:B},
+         decision_point:{at_m:Math.round(measure(B)[1]), lat:B[1][1], lng:B[1][0], onto:"Road No 36"},
+         turns:turns(B, [[0,"Start on Hitec City Main Road","Hitec City Main Road"],[1,"Turn right onto Road No 36","Road No 36"],[4,"Turn left onto Road No 45","Road No 45"],[7,"Continue onto KBR Park Road","KBR Park Road"]])}},
+    zones:{type:"FeatureCollection",features:[{type:"Feature",properties:{cause:"WATERLOGGING",status:"ACTIVE"},geometry:{type:"Polygon",coordinates:[[[78.4150,17.4462],[78.4226,17.4420],[78.4236,17.4434],[78.4160,17.4476],[78.4150,17.4462]]]}}]}};
+}
+
+/* ---------- state ---------- */
+let pack, source = "live", active = "A", lines = {}, map, me, pos = null, track = [], lastAlong = 0, spoken = new Set(), proposed = null, wake = null, simTimer = null;
+
+async function loadPack(){
+  const key = "pack:" + routeId;
+  if (routeId && location.protocol !== "file:") {
+    try { const r = await fetch(`/v1/packs/${routeId}`); if (!r.ok) throw 0; pack = await r.json(); source = "live"; try { localStorage.setItem(key, JSON.stringify(pack)); } catch {} return; } catch {}
+  }
+  try { const saved = routeId && localStorage.getItem(key); if (saved) { pack = JSON.parse(saved); source = "saved"; return; } } catch {}
+  pack = demoPack(); source = "preview";
+}
+function setState(){
+  const t = new Date(pack.built_at).toLocaleTimeString("en-IN", {hour:"numeric", minute:"2-digit"});
+  const online = navigator.onLine && source === "live";
+  $("state").textContent = source === "preview" ? "Preview data" : online ? "Live" : `No connection · saved ${t}`;
+  $("state").className = "state" + (online ? "" : " off");
+}
+function chooseFromHash(){ const h = location.hash.replace("#", "").toUpperCase(); if (pack.routes[h]) setActive(h, false); }
+function setActive(label, say = true){
+  if (!pack.routes[label]) return;
+  active = label; spoken.clear(); proposed = null; $("alert").hidden = true;
+  if (location.hash !== "#" + label) history.replaceState(null, "", "#" + label);
+  renderBar(); paint(); guide();
+  if (say) speak(`Route ${label}. ${pack.routes[label].turns[0].text}`);
+}
+function renderBar(){
+  $("bar").innerHTML = Object.values(pack.routes).map(r => `<button class="rt" style="--c:var(${COLOR[r.label]})" aria-pressed="${r.label === active}" data-r="${r.label}">
+      <b>${r.label}: ${r.minutes} min</b><span>via ${esc((r.via || []).join(", ") || "local roads")}</span></button>`).join("") + `<button class="go" id="go">${simTimer || wake ? "Stop" : "Start"}</button>`;
+}
+$("bar").onclick = e => { const b = e.target.closest("[data-r]"); if (b) { setActive(b.dataset.r); return; } if (e.target.id === "go") toggleStart(); };
+
+/* ---------- map ---------- */
+const BLANK = {version:8, sources:{}, layers:[{id:"bg", type:"background", paint:{"background-color":"#E4E7E9"}}]};
+async function style(){ try { const c = new AbortController(); setTimeout(() => c.abort(), 3500); const r = await fetch("https://tiles.openfreemap.org/styles/positron", {signal:c.signal}); if (!r.ok) throw 0; return await r.json(); } catch { return BLANK; } }
+function hatch(){ const c = document.createElement("canvas"); c.width = c.height = 16; const x = c.getContext("2d"); x.fillStyle = "rgba(242,183,5,.85)"; x.fillRect(0,0,16,16); x.strokeStyle = "rgba(30,26,5,.85)"; x.lineWidth = 4;
+  for (const o of [-16,0,16]) { x.beginPath(); x.moveTo(o,16); x.lineTo(o+16,0); x.stroke(); } const d = x.getImageData(0,0,16,16); return {width:16, height:16, data:d.data}; }
+function paint(){
+  if (!map || !map.getSource("routes")) return;
+  const order = Object.keys(pack.routes).sort((a, b) => (a === active) - (b === active));       // active drawn last, on top
+  map.getSource("routes").setData({type:"FeatureCollection", features: order.map(l => ({type:"Feature", geometry:pack.routes[l].geometry,
+    properties:{color: l === active ? css(COLOR[l]) : "#9AA3AA", width: l === active ? 6 : 4}}))});
+}
+async function initMap(){
+  if (!window.maplibregl) return;                               // library not cached yet and no network: text guidance still works
+  map = new maplibregl.Map({container:"map", style: await style(), center:[pack.from.lng, pack.from.lat], zoom:13, attributionControl:{compact:true}});
+  map.on("load", () => {
+    map.addImage("hatch", hatch());
+    map.addSource("zones", {type:"geojson", data:pack.zones}); map.addLayer({id:"zones", type:"fill", source:"zones", paint:{"fill-pattern":"hatch"}});
+    map.addSource("routes", {type:"geojson", data:{type:"FeatureCollection", features:[]}});
+    map.addLayer({id:"routes-case", type:"line", source:"routes", layout:{"line-cap":"round","line-join":"round"}, paint:{"line-color":"#fff","line-width":["+",["get","width"],3]}});
+    map.addLayer({id:"routes", type:"line", source:"routes", layout:{"line-cap":"round","line-join":"round"}, paint:{"line-color":["get","color"],"line-width":["get","width"]}});
+    paint();
+    const all = Object.values(pack.routes).flatMap(r => r.geometry.coordinates), xs = all.map(c => c[0]), ys = all.map(c => c[1]);
+    map.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]], {padding:40, duration:0});
+    const el = document.createElement("div"); el.innerHTML = '<div class="me"></div>'; me = new maplibregl.Marker({element:el});
+  });
+}
+
+/* ---------- guidance ---------- */
+function speak(text){ try { if (!("speechSynthesis" in window)) return; const u = new SpeechSynthesisUtterance(text); u.lang = "en-IN"; speechSynthesis.speak(u); } catch {} }
+function guide(){
+  const r = pack.routes[active], L = lines[active]; if (!r) return;
+  let along = 0, off = null;
+  if (pos) { const p = project(L.coords, L.cum, pos); along = p.along; off = p.off; }
+  const next = r.turns.find(t => t.at_m > along + 15) || r.turns[r.turns.length - 1];
+  const after = r.turns[r.turns.indexOf(next) + 1];
+  const left = Math.max(0, next.at_m - along);
+  if (off !== null && off > OFF_ROUTE_M) { $("dist").textContent = fmt(off); $("what").textContent = `Off Route ${active}. Head back to ${r.turns.filter(t => t.at_m <= along).pop()?.road || "the route"}`; $("then").textContent = ""; return; }
+  $("dist").textContent = pos ? fmt(left) : `${r.minutes} min · ${r.km} km`;
+  $("what").textContent = pos ? next.text : r.turns[0].text;
+  $("then").textContent = pos && after ? `Then: ${after.text}` : `Route ${active}${r.via?.length ? " via " + r.via.join(", ") : ""}. Usual time ${pack.usual_minutes} min.`;
+  if (pos) for (const [mark, lead] of [[300, "In 300 metres, "], [60, ""]]) { const k = next.at_m + ":" + mark; if (left <= mark && !spoken.has(k) && next.text !== "Arrive") { spoken.add(k); speak(lead + next.text); break; } }
+  if (pos && next.text === "Arrive" && left < 40 && !spoken.has("arrive")) { spoken.add("arrive"); speak("You have arrived"); }
+  crawlCheck(along);
+}
+function ahead(label, along){                    // metres to the point where `label` leaves the active route, if still ahead
+  const dp = pack.routes[label]?.decision_point; if (!dp || label === active) return null;
+  const at = project(lines[active].coords, lines[active].cum, [dp.lng, dp.lat]); if (at.off > 80) return null;
+  const d = at.along - along; return d > 20 ? d : null;
+}
+function propose(label, why){
+  if (proposed === label) return; proposed = label; const dp = pack.routes[label].decision_point;
+  $("alert-text").textContent = `${why} Switch to Route B`.replace("Route B", "Route " + label) + (dp?.onto ? ` at ${dp.onto}` : "") + ".";
+  $("alert").hidden = false; $("alert-do").onclick = () => setActive(label); speak($("alert-text").textContent);
+}
+function crawlCheck(along){                      // works with no network: the phone's own speed says the road is jammed
+  const now = Date.now(); lastAlong = along; track.push({t: now, along}); track = track.filter(x => now - x.t <= 10 * 60e3);
+  const old = [...track].reverse().find(x => now - x.t >= CRAWL_MS); if (!old) return;    // newest fix that is at least 4 minutes old
+  const kmh = (along - old.along) / ((now - old.t) / 1000) * 3.6; if (kmh >= CRAWL_KMH) return;
+  for (const l of Object.keys(pack.routes)) { const d = ahead(l, along); if (d !== null && d <= AHEAD_M) { propose(l, "Traffic is crawling."); return; } }
+}
+function onPosition(lng, lat){ pos = [lng, lat]; if (me && map) { me.setLngLat(pos).addTo(map); map.easeTo({center:pos, duration:600}); } guide(); }
+
+/* ---------- start, stop, simulate ---------- */
+async function toggleStart(){
+  if (simTimer || wake !== null) { clearInterval(simTimer); simTimer = null; if (wake?.release) wake.release(); wake = null; if (toggleStart.watch) navigator.geolocation.clearWatch(toggleStart.watch); renderBar(); return; }
+  try { wake = (await navigator.wakeLock?.request("screen")) || true; } catch { wake = true; }
+  if (params.has("sim") || source === "preview") {                       // demo and tests: drive the active route
+    let m = 0; const step = +(params.get("step") || 120);
+    simTimer = setInterval(() => { const L = lines[active]; m += step; const p = pointAt(L.coords, L.cum, m); onPosition(p[0], p[1]); if (m >= L.cum[L.cum.length-1]) { clearInterval(simTimer); simTimer = null; renderBar(); } }, +(params.get("tick") || 700));
+  } else if ("geolocation" in navigator) {
+    toggleStart.watch = navigator.geolocation.watchPosition(p => onPosition(p.coords.longitude, p.coords.latitude),
+      () => { $("what").textContent = "Location is off. Turn it on to be guided; the turn list still works."; }, {enableHighAccuracy:true, maximumAge:2000, timeout:30000});
+  }
+  renderBar(); speak(pack.routes[active].turns[0].text);
+}
+
+/* ---------- when there is data: ask which route is best now ---------- */
+async function poll(){
+  if (source !== "live" || !navigator.onLine) { setState(); return; }
+  try {
+    const s = await (await fetch(`/v1/packs/${routeId}/status`)).json();
+    if (s.stale) { await loadPack(); prepare(); return; }
+    if (s.best && s.best !== active) { const d = pos ? ahead(s.best, project(lines[active].coords, lines[active].cum, pos).along) : 1; if (d !== null) propose(s.best, "A faster way opened up."); }
+  } catch { source = "saved"; }
+  setState();
+}
+function prepare(){
+  lines = {}; for (const r of Object.values(pack.routes)) lines[r.label] = {coords: r.geometry.coordinates, cum: measure(r.geometry.coordinates)};
+  document.title = `${pack.name} · DetourAI`; $("name").firstChild.textContent = pack.name;
+  $("sub").textContent = `${pack.from.label || "Start"} to ${pack.to.label || "destination"}`;
+  if (!pack.routes[active]) active = pack.best || "A";
+  setState(); renderBar(); paint(); guide();
+}
+(async () => {
+  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("/sw.js", {scope:"/"}).catch(() => {});
+  await loadPack(); prepare(); chooseFromHash(); await initMap();
+  addEventListener("hashchange", chooseFromHash); addEventListener("online", poll); addEventListener("offline", setState);
+  setInterval(poll, 60e3); poll();
+  setInterval(() => { if (pos) crawlCheck(lastAlong); }, 30e3);      // a stopped phone sends no new fixes; keep checking anyway
+  if (params.has("sim")) toggleStart();
+})();
+</script>
+</body>
+</html>

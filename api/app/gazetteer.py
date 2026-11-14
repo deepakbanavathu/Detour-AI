@@ -32,6 +32,14 @@ def _load_abbrev() -> None:
         _abbrev.setdefault(int(r["city_id"]), []).append((pat, r["long"]))
 
 
+def set_abbreviations(rows: list[tuple[int, str, str]]) -> None:
+    """Load abbreviations from memory instead of the database: (city_id, short, long). Used by tests."""
+    _abbrev.clear()
+    for city_id, short, long in sorted(rows, key=lambda r: -len(r[1])):
+        pat = re.compile(r"(?<![a-z0-9])" + re.escape(short) + r"(?![a-z0-9])")
+        _abbrev.setdefault(int(city_id), []).append((pat, long))
+
+
 def normalize(text: str, city_id: int = CITY_ID) -> str:
     """NFC, strip URLs/mentions/emoji, lowercase, expand abbreviations, collapse whitespace."""
     if not _abbrev:

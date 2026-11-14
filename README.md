@@ -5,7 +5,7 @@ graph, and gives each vehicle class a proper re-route: a scooter and a car do no
 detour. Backend-first; commuters get alerts over WhatsApp with a Google Maps handoff, fleets get
 an API/SDK. Design, plan and legal review live in the project doc; this repo is the build.
 
-## What works today (v0.4)
+## What works today (v0.6)
 
 | Piece | Where | Status |
 | --- | --- | --- |
@@ -18,10 +18,10 @@ an API/SDK. Design, plan and legal review live in the project doc; this repo is 
 | IR → zone: deterministic anchor resolution, displaced-corridor geometry, buffers by cause, directional penalty, merge/decay/expiry, projection onto edges | `api/app/zones.py`, `geo.apply_zone()` | done |
 | Console map: routes per profile, paste an advisory and see the polygon, inspect edges, close a gate, refute a zone | `/console` | done |
 | Ingestion worker: source registry, RSS / X / TomTom incidents / Open-Meteo pollers, shared pipeline, review queue, lifted-advisory handling | `api/app/worker.py`, `api/app/ingest/` | done (live endpoints untested from the build sandbox) |
+| Route packs: up to three size-valid alternates per saved route, turn lists, decision points, best-now status; offline route card with GPS guidance, voice, `#A/#B/#C` links and the crawl rule | `api/app/packs.py`, `/card/{route_id}` | done (corridor basemap for offline not yet bundled) |
 | Place search by name on the console, saved team routes, daily road brief as page, WhatsApp text and email HTML | `/brief`, `api/app/brief.py` | done |
 
-Next: review queue and source status in the console, WhatsApp channel and corridors, telemetry and stall
-detection, IMD nowcast adapter, TomTom flow speeds, GraphHopper with `net.turn`.
+Next: WhatsApp channel with SMS fallback, offline corridor basemap for the card, telemetry and stall detection, IMD nowcast adapter, GraphHopper with `net.turn`.
 
 ## Prerequisites
 
@@ -58,8 +58,13 @@ the page shows preview data and says so, so the design can be reviewed before th
   match and score, the zone method (displaced corridor, between, single anchor) and draws the polygon.
   *Commit zone* inserts it (ACTIVE at confidence ≥ 0.75, else CANDIDATE) and projects it onto edges,
   so the next Route call already avoids it.
-- **Admin** (token): click a zone to refute/activate/expire; *Inspect edges* then click the map to see
-  widths, who may pass, gate state, and close a gate with or without a two-wheeler gap.
+- **Review**: the sentences the pipeline could not place, each with the reason in plain words. Pick the place
+  that was meant (from the candidates or by searching) and DetourAI learns the name and re-runs the sentence;
+  the tab shows how many are waiting.
+- **Roads**: click the map to see widths, who may pass and gate state; close a road to cars or to everyone.
+- **Feeds**: every source with its state (working, needs a key, failing, paused), schedule and counts; pause,
+  resume, *Check now*, and a form to add a news feed or an X account.
+- **Admin access** (top right) holds the token these changes need; it stays in the tab only.
 
 ## The road brief (the team newsletter)
 
@@ -78,6 +83,33 @@ time, the roads to take instead and a Google Maps link when it is affected.
 
 "Usual time" is the same trip routed with every zone ignored, so the delay shown is the delay the
 zones cause, not traffic in general.
+
+## Route packs and the offline card
+
+![Route card](docs/card.png)
+
+`GET /v1/packs/{route_id}` builds up to three routes for a saved team route: A (best now) and B, C (each sharing at
+most 40% of its length with the others, valid for the vehicle). Each has its line, a turn list in road names, its time,
+and the decision point where it leaves route A. `GET /v1/packs/{route_id}/status` says which is best right now.
+
+`/card/{route_id}` is the route card: open it once with data and it keeps working without. It guides from the phone's
+own GPS, speaks the turns, switches route when the link ends in `#B` (the form an SMS carries), and proposes an
+alternate by itself when the phone crawls for four minutes ahead of a turn-off. *Start* begins guidance and keeps
+the screen awake. Not yet bundled: an offline basemap for the corridor, so with no data the routes are drawn on a
+plain background.
+
+## Testing
+
+| Command | What it runs |
+| --- | --- |
+| `make test` | 54 unit tests: advisory parser, normalization, Maps handoff, brief, packs, routing SQL, feed parsers |
+| `make test-sql` | every SQL file and embedded statement through PostgreSQL's parser |
+| `make test-ui` | 22 browser tests of the console (routes, advisories, review, roads, feeds), brief and route card on preview data |
+| `make test-live` | 13 end-to-end tests against the running stack (skipped when it is down) |
+
+`pip install -r requirements-dev.txt` and `python -m playwright install chromium` set up the tools. GitHub Actions
+runs the first three on every push (`.github/workflows/tests.yml`). The scenario catalogue, with manual checks for
+phones and live feeds, is in `docs/TEST_SCENARIOS.md`.
 
 ## Ingestion (the worker)
 

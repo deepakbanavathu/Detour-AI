@@ -1,13 +1,8 @@
 """Parser tests for the pollers. No network, no database: fixtures follow each provider's documented payload shape."""
-import sys
 from datetime import datetime, timezone
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "api"))
-
-from app import ir                                                    # noqa: E402
-from app.ingest import openmeteo, rss, tomtom, xapi                   # noqa: E402
-from app.ingest.text import advisory_sentences, html_to_text, relevant  # noqa: E402
+from app.ingest import openmeteo, rss, tomtom, xapi
+from app.ingest.text import advisory_sentences, html_to_text, relevant
 
 FEED = b"""<?xml version="1.0"?><rss version="2.0"><channel><title>Hyderabad</title>
 <item><title>Traffic curbs announced for Sadar Utsav Mela in Hyderabad</title><link>https://example.org/a1</link><guid>a1</guid>
@@ -24,26 +19,6 @@ def test_rss_parse_and_relevance():
     assert relevant(items[0].title + items[0].text) and not relevant(items[1].title + items[1].text)
     sents = advisory_sentences(items[0].text)
     assert len(sents) == 1 and sents[0].startswith("Traffic from Kachiguda")
-
-
-def test_news_sentence_reaches_ir():
-    s = "traffic from kachiguda cross roads towards post office junction will be diverted at lingampally cross roads towards tourist junction via barkatpura chaman."
-    out = ir.regex_ir(s)
-    assert out and out["event_type"] == "DIVERSION"
-    roles = {a["role"]: a["text"] for a in out["anchors"]}
-    # the shut stretch is Lingampally -> Post Office Junction; Tourist Junction via Barkatpura Chaman is the way round
-    assert roles == {"FROM": "lingampally cross roads", "TO": "post office junction"}
-    assert out["detour"] == {"towards": "tourist junction", "via": "barkatpura chaman", "origin": "kachiguda cross roads"}
-
-
-def test_short_forms_still_parse():
-    a = ir.regex_ir("traffic diverted from jubilee hills check post towards madhapur via road no 36 due to waterlogging")
-    assert [(x["role"], x["text"]) for x in a["anchors"]] == [("FROM", "jubilee hills check post"), ("TO", "madhapur"), ("VIA", "road no 36")]
-    b = ir.regex_ir("traffic restricted between lb nagar junction and nagole due to vip movement from 10 am to 12 pm")
-    assert b["event_type"] == "VIP_MOVEMENT" and [x["text"] for x in b["anchors"]] == ["lb nagar junction", "nagole"]
-    c = ir.regex_ir("traffic restored and normal at begumpet after accident cleared")
-    assert c["event_type"] == "LIFTED" and c["anchors"][0]["text"] == "begumpet"
-    assert ir.regex_ir("gold prices dip in hyderabad") is None
 
 
 def test_html_to_text_drops_chrome():

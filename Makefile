@@ -3,7 +3,7 @@ SHELL := /bin/bash
 DB_URL ?= postgresql://detour:$${DB_PASSWORD:-detour}@127.0.0.1:5432/detour
 PBF ?= data/southern-zone-latest.osm.pbf
 
-.PHONY: up down logs migrate import gazetteer turns smoke psql test
+.PHONY: up down logs migrate import gazetteer turns smoke psql test test-sql test-ui test-live test-all
 
 up:            ## build and start db, redpanda, api
 	docker compose up -d --build
@@ -32,5 +32,16 @@ smoke:         ## 2W vs SUV on a fixed pair of points
 psql:
 	psql "$(DB_URL)"
 
-test:          ## parser tests, no network or database (pip install -r api/requirements.txt pytest)
-	python -m pytest -q tests
+test:          ## unit tests: parsers, normalization, maps, brief, packs, routing SQL (no network, no database)
+	python -m pytest tests --ignore=tests/ui --ignore=tests/integration
+
+test-sql:      ## parse every SQL file and embedded statement with PostgreSQL's parser
+	python scripts/check_sql.py
+
+test-ui:       ## browser tests on preview data (pip install -r requirements-dev.txt; python -m playwright install chromium)
+	python -m pytest tests/ui
+
+test-live:     ## end-to-end against the running stack (needs make up, migrate, import)
+	python -m pytest -m live tests/integration
+
+test-all: test test-sql test-ui test-live

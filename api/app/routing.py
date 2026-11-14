@@ -56,13 +56,19 @@ def _bbox(origin: tuple[float, float], dest: tuple[float, float], factor: float 
     return (min(lng1, lng2) - pad, min(lat1, lat2) - pad, max(lng1, lng2) + pad, max(lat1, lat2) + pad)
 
 
-def _edge_sql(p: Profile, bbox: tuple[float, float, float, float], use_zones: bool = True) -> str:
+def _edge_sql(p: Profile, bbox: tuple[float, float, float, float], use_zones: bool = True,
+              penalize: list[int] | None = None, penalty: float = 1.0) -> str:
     """Edge-cost SQL for pgr_dijkstra. All values interpolated are numbers or SQL literals from the profile table."""
     bit = int(p.bit)
     maxspeed = float(p.max_speed_kmh)
     clearance = float(p.ground_clearance_m)
     can_filter = "true" if p.can_filter else "false"
     minx, miny, maxx, maxy = (float(v) for v in bbox)
+    # alternates: make the edges of routes already chosen more expensive so the next search goes elsewhere
+    pen = ""
+    if penalize and penalty > 1.0:
+        ids = ",".join(str(int(i)) for i in penalize)
+        pen = f" * CASE WHEN e.edge_id = ANY('{{{ids}}}'::bigint[]) THEN {float(penalty)} ELSE 1 END"
 
     speed = f"""
         CASE WHEN y.speed_now_kmh IS NOT NULL AND y.speed_now_kmh > 0 THEN
@@ -77,10 +83,10 @@ def _edge_sql(p: Profile, bbox: tuple[float, float, float, float], use_zones: bo
              WHEN y.gate_state IN ('CLOSED_REPORTED','CLOSED_INFERRED') AND NOT ({bit} = 1 AND y.two_wheeler_gap) THEN -1
              WHEN y.depth_est_m >= {clearance} THEN -1
              WHEN (y.zone_mask & {bit}) > 0 AND {zone_penalty} >= 1.0 THEN -1
-             ELSE (e.length_m / (({speed}) / 3.6))
+             ELSE ((e.length_m / (({speed}) / 3.6))
                   * (1 + {ZONE_SOFT_MULT} * CASE WHEN (y.zone_mask & {bit}) > 0 THEN {zone_penalty} ELSE 0 END)
                   * (1 + {SUBMERGE_MULT} * y.p_submerge)
-                  + CASE WHEN y.gate_state = 'UNKNOWN' THEN -ln(GREATEST(y.p_open_now, 0.001)) * {UNKNOWN_GATE_COST_S} ELSE 0 END
+                  + CASE WHEN y.gate_state = 'UNKNOWN' THEN -ln(GREATEST(y.p_open_now, 0.001)) * {UNKNOWN_GATE_COST_S} ELSE 0 END){pen}
         END"""
 
     return f"""
@@ -118,8 +124,10 @@ def _snap(c, p: Profile, lat: float, lng: float) -> Snap:
     return Snap(int(row["node_id"]), int(row["edge_id"]), float(row["lat"]), float(row["lng"]), float(row["dist_m"]))
 
 
-def route(p: Profile, origin: tuple[float, float], dest: tuple[float, float], use_zones: bool = True) -> RouteResult:
-    """use_zones=False gives the usual route, as if no zone were active (the brief compares against it)."""
+def route(p: Profile, origin: tuple[float, float], dest: tuple[float, float], use_zones: bool = True,
+          penalize: list[int] | None = None, penalty: float = 1.0) -> RouteResult:
+    """use_zones=False gives the usual route, as if no zone were active (the brief compares against it).
+    penalize/penalty steer the search away from given edges (route packs use it to find alternates)."""
     with conn() as c:
         sf = _snap(c, p, *origin)
         st = _snap(c, p, *dest)
@@ -132,7 +140,7 @@ def route(p: Profile, origin: tuple[float, float], dest: tuple[float, float], us
         for expansions in range(ROUTE_BBOX_RETRIES + 1):
             rows = c.execute(
                 "SELECT seq, node, edge, cost, agg_cost FROM pgr_bdDijkstra(%s, %s, %s, true) ORDER BY seq",
-                (_edge_sql(p, _bbox(origin, dest, 2.0 ** expansions), use_zones), s, t),
+                (_edge_sql(p, _bbox(origin, dest, 2.0 ** expansions), use_zones, penalize, penalty), s, t),
             ).fetchall()
             if rows:
                 break
@@ -164,7 +172,9 @@ def route(p: Profile, origin: tuple[float, float], dest: tuple[float, float], us
                      'edge_id', edge_id, 'length_m', length_m, 'highway_rank', highway_rank, 'name', name,
                      'zone_adjacent', zone_adjacent, 'gate_state', gate_state,
                      'mid_lat', ST_Y(ST_LineInterpolatePoint(g, 0.5)),
-                     'mid_lng', ST_X(ST_LineInterpolatePoint(g, 0.5))) ORDER BY seq) AS edges
+                     'mid_lng', ST_X(ST_LineInterpolatePoint(g, 0.5)),
+                     'start_lat', ST_Y(ST_StartPoint(g)), 'start_lng', ST_X(ST_StartPoint(g)),
+                     'bearing', COALESCE(degrees(ST_Azimuth(ST_StartPoint(g), ST_EndPoint(g))), 0)) ORDER BY seq) AS edges
             FROM seg
             """,
             (edges, nodes),

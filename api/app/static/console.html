@@ -22,6 +22,7 @@
          --inform:#4C8FE0; --stop:#E5665F; --go:#4FB380; --v-2w:#4FB380; --v-car:#4C8FE0; --v-suv:#A27BD6; --v-lcv:#E08A4A; --v-3w:#3FB3C6; }
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{height:100%;margin:0}
 body{font:400 14px/1.45 var(--font);color:var(--ink);background:var(--ground);font-variant-numeric:tabular-nums}
 button,input,textarea{font:inherit;color:inherit}
@@ -44,8 +45,16 @@ button,input,textarea{font:inherit;color:inherit}
 #map{min-height:0;height:100%}
 
 /* Tabs */
-.tabs{display:flex;padding:0 12px;border-bottom:1px solid var(--rule);background:var(--surface)}
-.tab{border:0;background:none;padding:12px 12px 10px;font-weight:600;color:var(--ink-2);cursor:pointer;border-bottom:3px solid transparent}
+.tabs{display:flex;padding:0 8px;border-bottom:1px solid var(--rule);background:var(--surface);overflow-x:auto}
+.tab{border:0;background:none;padding:12px 9px 10px;font-weight:600;color:var(--ink-2);cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap}
+.count{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-radius:9px;background:var(--divert);color:var(--divert-ink);font-size:12px;line-height:18px;text-align:center}
+.sent{margin:6px 0;font-size:14.5px}
+.pill{display:inline-block;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:600;border:1px solid var(--rule);color:var(--ink-2)}
+.pill.go{border-color:var(--go);color:var(--go)} .pill.warn{background:var(--divert);border-color:var(--divert);color:var(--divert-ink)} .pill.bad{border-color:var(--stop);color:var(--stop)}
+.feed-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.err{color:var(--stop);font-size:12.5px;margin:4px 0 0;overflow-wrap:anywhere}
+select{font:inherit;color:inherit;background:var(--surface);border:1px solid var(--rule);border-radius:var(--r-ctl);padding:8px 10px;width:100%}
+.pane h2{font-size:13px;font-weight:600;color:var(--ink-2);margin:22px 0 2px}
 .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--divert)}
 .pane{display:none;overflow:auto;padding:14px 14px 24px;min-height:0;flex:1}
 .pane.on{display:block}
@@ -168,7 +177,9 @@ dialog h2{margin:0 0 6px;font-size:17px}
       <div class="tabs" role="tablist">
         <button class="tab" role="tab" aria-selected="true" aria-controls="p-routes" id="t-routes">Routes</button>
         <button class="tab" role="tab" aria-selected="false" aria-controls="p-adv" id="t-adv">Advisories</button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="p-review" id="t-review">Review<span class="count" id="review-count" hidden></span></button>
         <button class="tab" role="tab" aria-selected="false" aria-controls="p-roads" id="t-roads">Roads</button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="p-feeds" id="t-feeds">Feeds</button>
       </div>
 
       <div class="pane on" id="p-routes" role="tabpanel" aria-labelledby="t-routes">
@@ -199,6 +210,27 @@ dialog h2{margin:0 0 6px;font-size:17px}
         <div id="reading" aria-live="polite"></div>
         <label class="f" style="margin-top:20px">Zones in this view <span class="tagline"><label><input type="checkbox" id="cands"> include unconfirmed</label></span></label>
         <div id="zonelist"></div>
+      </div>
+
+      <div class="pane" id="p-review" role="tabpanel" aria-labelledby="t-review">
+        <p class="hint" style="margin-top:0">Advisory sentences DetourAI could not place on the map. Tell it which place was meant and it learns the name and tries again.</p>
+        <div id="reviewlist" aria-live="polite"></div>
+      </div>
+
+      <div class="pane" id="p-feeds" role="tabpanel" aria-labelledby="t-feeds">
+        <p class="hint" style="margin-top:0">Where advisories, incidents and rain come from, and whether each one is working.</p>
+        <div id="feedlist" aria-live="polite"></div>
+        <h2>Add a feed</h2>
+        <label class="f" for="feed-kind">Kind</label>
+        <select id="feed-kind"><option value="RSS">News feed (RSS)</option><option value="X">X account</option></select>
+        <label class="f" for="feed-name">Name</label>
+        <input type="text" id="feed-name" maxlength="80" autocomplete="off" placeholder="Telangana Today, Hyderabad">
+        <label class="f" for="feed-handle" id="feed-handle-l">Feed address</label>
+        <input type="text" id="feed-handle" maxlength="300" autocomplete="off" placeholder="https://…/feed">
+        <label class="f" for="feed-cred">How far do you trust it?</label>
+        <input type="range" id="feed-cred" min="0.3" max="1" step="0.05" value="0.75">
+        <div class="scale"><span>forwarded message</span><span>local news</span><span>police handle</span></div>
+        <div class="actions"><button class="btn go" id="feed-add">Add feed</button></div>
       </div>
 
       <div class="pane" id="p-roads" role="tabpanel" aria-labelledby="t-roads">
@@ -281,6 +313,18 @@ const DEMO = {
            [[78.4335,17.4322],[78.4300,17.4250],[78.4262,17.4214],[78.4240,17.4140]],
            [[78.3860,17.4380],[78.3962,17.4352],[78.4058,17.4352]],[[78.4398,17.4251],[78.4349,17.4176],[78.4330,17.4100]],
            [[78.3900,17.4300],[78.4010,17.4290],[78.4096,17.4298]],[[78.4300,17.4480],[78.4262,17.4380]],[[78.4441,17.4188],[78.4560,17.4210]]],
+  review:[
+    {review_id:31, sentence:"traffic diverted at chowrasta towards mehdipatnam via ring road due to road work", reason:"UNRESOLVED", anchor:"chowrasta", source_type:"RSS", source_handle:"Telangana Today", created_at:new Date(Date.now()-14*60e3).toISOString(),
+     candidates:[]},
+    {review_id:30, sentence:"water logging at road no 1. commuters advised to avoid", reason:"AMBIGUOUS", anchor:"road no 1", source_type:"X", source_handle:"@HYDTP", created_at:new Date(Date.now()-52*60e3).toISOString(),
+     candidates:[{gaz_id:812, canonical:"Road No 1 Banjara Hills", feature_class:"ROAD", score:0.71},{gaz_id:977, canonical:"Road No 1 Jubilee Hills", feature_class:"ROAD", score:0.69},{gaz_id:1203, canonical:"Road No 1 KPHB", feature_class:"ROAD", score:0.66}]},
+    {review_id:28, sentence:"traffic police conducted a special drive against wrong side driving", reason:"NO_ANCHOR", anchor:null, source_type:"RSS", source_handle:"Siasat", created_at:new Date(Date.now()-3*3600e3).toISOString(), candidates:[]}],
+  sources:[
+    {source_id:1, kind:"RSS", name:"Telangana Today, Hyderabad", handle:"https://example.org/feed", cred:0.75, interval_s:300, enabled:true, state:"ok", last_polled:new Date(Date.now()-2*60e3).toISOString(), last_error:null, items_total:124, zones_total:9},
+    {source_id:2, kind:"X", name:"Hyderabad Traffic Police", handle:"@HYDTP", cred:0.9, interval_s:600, enabled:true, state:"needs a key", last_polled:new Date(Date.now()-6*60e3).toISOString(), last_error:"skipped: X_BEARER_TOKEN is not set", items_total:0, zones_total:0},
+    {source_id:3, kind:"TOMTOM_INCIDENTS", name:"TomTom traffic incidents", handle:"", cred:0.8, interval_s:1200, enabled:true, state:"ok", last_polled:new Date(Date.now()-11*60e3).toISOString(), last_error:null, items_total:37, zones_total:14},
+    {source_id:4, kind:"OPEN_METEO", name:"Open-Meteo rain grid", handle:"", cred:0.6, interval_s:3600, enabled:true, state:"ok", last_polled:new Date(Date.now()-38*60e3).toISOString(), last_error:null, items_total:2376, zones_total:0},
+    {source_id:5, kind:"RSS", name:"Deccan Chronicle, Telangana", handle:"https://example.org/wrong", cred:0.75, interval_s:300, enabled:true, state:"failing", last_polled:new Date(Date.now()-4*60e3).toISOString(), last_error:"Client error '404 Not Found' for url 'https://example.org/wrong'", items_total:0, zones_total:0}],
   places:[["Madhapur","area",17.4486,78.3908],["Banjara Hills","area",17.4126,78.4480],["Jubilee Hills Check Post","junction",17.4326,78.4071],["Hitec City","area",17.4435,78.3772],
           ["Gachibowli","area",17.4401,78.3489],["Kukatpally","area",17.4948,78.3996],["Secunderabad","area",17.4399,78.4983],["Begumpet","area",17.4447,78.4664],["LB Nagar Junction","junction",17.3457,78.5522],["Tolichowki","area",17.3985,78.4162]],
   roads:[{edge_id:48213,name:"Road No 36 Lane 4",highway:"residential",width_m:3.4,width_src:"CLASS_DEFAULT",open_to:"2W,3W",gate_state:"UNKNOWN",two_wheeler_gap:true,oneway:false},
@@ -302,6 +346,8 @@ document.querySelectorAll(".tab").forEach(tab => tab.onclick = () => {
   document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === tab.getAttribute("aria-controls")));
   setPick(null);
   if (map) map.getCanvas().style.cursor = tab.id === "t-roads" ? "crosshair" : "";
+  if (tab.id === "t-review") loadReview();
+  if (tab.id === "t-feeds") loadSources();
 });
 const activeTab = () => document.querySelector('.tab[aria-selected="true"]').id;
 
@@ -372,7 +418,7 @@ async function boot(){
       map.addSource("streets", {type:"geojson", data:fc(DEMO.streets.map(c => ({type:"Feature", geometry:{type:"LineString", coordinates:c}, properties:{}})))});
       map.addLayer({id:"streets", type:"line", source:"streets", layout:{"line-cap":"round","line-join":"round"}, paint:{"line-color":"#fff","line-width":6}}, "zones-fill");
     }
-    setPins(); loadZones();
+    setPins(); loadZones(); loadReview();
     if (!live) { drawRoutes(DEMO.compare); }
   });
   map.on("moveend", loadZones);
@@ -560,6 +606,83 @@ $("roadlist").onclick = async e => {
         toast({CLOSED_INFERRED:"Road closed to cars", CLOSED_REPORTED:"Road closed to everyone", OPEN:"Road reopened"}[b.dataset.state]); }
   catch (err) { toast(err.message, true); }
 };
+
+/* ---------- review queue ---------- */
+function ago(iso){ if (!iso) return "never"; const m = Math.round((Date.now() - new Date(iso)) / 60e3);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m/60)} h ago` : new Date(iso).toLocaleDateString("en-IN", {day:"numeric", month:"short"}); }
+const SRC_WORDS = {RSS:"News", X:"X", TELEGRAM:"Telegram", PASTE:"Pasted", TOMTOM:"TomTom", PDF_OCR:"PDF", FIELD_OFFICER:"Field report"};
+function why(r){ return r.reason === "NO_ANCHOR" ? "No place name was found in this sentence."
+  : r.reason === "AMBIGUOUS" ? `“${r.anchor}” could be more than one place. Which one?` : `“${r.anchor}” is not a place DetourAI knows yet. Which place is it?`; }
+async function loadReview(){
+  let rows; try { rows = live ? await api("/v1/review") : DEMO.review; } catch { return; }
+  $("review-count").hidden = rows.length === 0; $("review-count").textContent = rows.length;
+  $("reviewlist").innerHTML = rows.length ? rows.map(r => `<div class="road" data-review="${r.review_id}">
+      <p class="hint" style="margin:0">${esc(SRC_WORDS[r.source_type] || r.source_type)}, ${esc(r.source_handle)}, ${ago(r.created_at)}</p>
+      <p class="sent">${esc(r.sentence)}</p><p style="margin:0"><strong>${esc(why(r))}</strong></p>
+      ${(r.candidates || []).length ? `<div class="chips">${r.candidates.map(c => `<button class="chip plain" data-gaz="${c.gaz_id}">${esc(c.canonical)} <small class="muted">${CLASS_WORDS[c.feature_class] || ""}</small></button>`).join("")}</div>` : ""}
+      ${r.anchor ? `<div class="field" style="margin-top:8px"><input type="text" data-search placeholder="Search for the right place" autocomplete="off" aria-label="Search for the right place"><ul class="suggest" style="right:0" hidden></ul></div>` : ""}
+      <div class="actions" style="margin-top:8px"><button class="btn small" data-dismiss>${r.anchor ? "Skip this one" : "Not an advisory"}</button></div></div>`).join("")
+    : `<p class="empty">Nothing waiting. Every advisory sentence was placed on the map.</p>`;
+}
+async function resolveReview(id, body, done){
+  if (!needAdmin()) return;
+  try { const d = await api(`/v1/review/${id}`, {method:"POST", headers:adminHeaders(), body:JSON.stringify(body)});
+        toast(body.action === "dismiss" ? "Removed from the queue" : d.rerun?.zone ? "Name learned. The zone is on the map." : d.rerun?.ok ? "Name learned." : "Name learned, but another place in the sentence still needs fixing.");
+        loadReview(); loadZones(); if (done) done(); }
+  catch (err) { toast(err.message, true); }
+}
+let reviewTimer;
+$("reviewlist").addEventListener("click", e => {
+  const card = e.target.closest("[data-review]"); if (!card) return; const id = card.dataset.review;
+  const gaz = e.target.closest("[data-gaz]"); if (gaz) { resolveReview(id, {action:"alias", gaz_id:+gaz.dataset.gaz}); return; }
+  if (e.target.closest("[data-dismiss]")) resolveReview(id, {action:"dismiss"});
+});
+$("reviewlist").addEventListener("input", e => {
+  const input = e.target.closest("[data-search]"); if (!input) return; const list = input.nextElementSibling; clearTimeout(reviewTimer);
+  const q = input.value.trim(); if (q.length < 3) { list.hidden = true; return; }
+  reviewTimer = setTimeout(async () => {
+    let items = []; try { items = live ? (await api(`/v1/places/resolve?q=${encodeURIComponent(q)}`)).candidates.map(c => ({gaz_id:c.gaz_id, name:c.canonical, kind:CLASS_WORDS[c.feature_class] || ""}))
+      : DEMO.places.filter(pl => pl[0].toLowerCase().includes(q.toLowerCase())).map((pl, i) => ({gaz_id:9000 + i, name:pl[0], kind:pl[1]})); } catch {}
+    list.innerHTML = items.map(it => `<li role="option" data-gaz="${it.gaz_id}"><span>${esc(it.name)}</span><small>${esc(it.kind)}</small></li>`).join(""); list.hidden = !items.length;
+  }, 250);
+});
+
+/* ---------- feeds ---------- */
+const KIND_WORDS = {RSS:"News feed", X:"X account", TOMTOM_INCIDENTS:"Traffic incidents", OPEN_METEO:"Rain forecast"};
+const STATE_WORDS = {"ok":["Working","go"], "needs a key":["Needs a key","warn"], "failing":["Failing","bad"], "off":["Paused",""], "waiting for first poll":["Starting",""]};
+const KEY_HELP = {X:"Add X_BEARER_TOKEN to .env, then restart the worker.", TOMTOM_INCIDENTS:"Add TOMTOM_KEY to .env, then restart the worker."};
+async function loadSources(){
+  let rows; try { rows = live ? await api("/v1/sources") : DEMO.sources; } catch { return; }
+  $("feedlist").innerHTML = rows.map(s => { const [word, cls] = STATE_WORDS[s.state] || [s.state, ""]; const every = s.interval_s >= 3600 ? `${Math.round(s.interval_s/3600)} h` : `${Math.round(s.interval_s/60)} min`;
+    return `<div class="road" data-source="${s.source_id}"><div class="feed-head"><h3>${esc(s.name)}</h3><span class="pill ${cls}">${word}</span></div>
+      <p class="hint" style="margin:2px 0 0">${KIND_WORDS[s.kind] || s.kind}${s.handle && s.kind === "X" ? " " + esc(s.handle) : ""}, every ${every}, checked ${ago(s.last_polled)}</p>
+      <p class="hint" style="margin:2px 0 0">${nIN(s.items_total)} ${s.kind === "OPEN_METEO" ? "rain readings" : "items"}${s.kind === "OPEN_METEO" ? "" : `, ${nIN(s.zones_total)} zones`}</p>
+      ${s.state === "needs a key" ? `<p class="hint" style="margin:4px 0 0">${KEY_HELP[s.kind] || ""}</p>` : s.state === "failing" ? `<p class="err">${esc(s.last_error)}</p>` : ""}
+      <div class="actions" style="margin-top:8px"><button class="btn small" data-toggle="${s.enabled ? "false" : "true"}">${s.enabled ? "Pause" : "Resume"}</button>${s.enabled ? `<button class="btn small" data-now>Check now</button>` : ""}</div></div>`; }).join("")
+    || `<p class="empty">No feeds yet. Add a news feed or an X account below.</p>`;
+}
+$("feedlist").onclick = async e => {
+  const card = e.target.closest("[data-source]"); if (!card) return; const id = card.dataset.source;
+  const t = e.target.closest("[data-toggle]"), n = e.target.closest("[data-now]"); if (!t && !n) return;
+  if (!needAdmin()) return;
+  try { if (t) { await api(`/v1/sources/${id}/enabled?enabled=${t.dataset.toggle}`, {method:"POST", headers:adminHeaders()}); toast(t.dataset.toggle === "true" ? "Feed resumed" : "Feed paused"); }
+        else { await api(`/v1/sources/${id}/poll-now`, {method:"POST", headers:adminHeaders()}); toast("Checking within 15 seconds"); }
+        loadSources(); }
+  catch (err) { toast(err.message, true); }
+};
+$("feed-kind").onchange = () => { const x = $("feed-kind").value === "X"; $("feed-handle-l").textContent = x ? "Account handle" : "Feed address";
+  $("feed-handle").placeholder = x ? "@HYDTP" : "https://…/feed"; $("feed-cred").value = x ? 0.9 : 0.75; };
+$("feed-add").onclick = async () => {
+  const kind = $("feed-kind").value, name = $("feed-name").value.trim(), handle = $("feed-handle").value.trim();
+  if (name.length < 2) { toast("Give the feed a name.", true); $("feed-name").focus(); return; }
+  if (kind === "RSS" && !/^https?:\/\/\S+$/.test(handle)) { toast("A news feed needs its full address, starting with https://", true); $("feed-handle").focus(); return; }
+  if (kind === "X" && !/^@?\w{2,30}$/.test(handle)) { toast("An X account needs its handle, like @HYDTP", true); $("feed-handle").focus(); return; }
+  if (!needAdmin()) return;
+  try { await api("/v1/sources", {method:"POST", headers:adminHeaders(), body:JSON.stringify({kind, name, handle: kind === "X" && !handle.startsWith("@") ? "@" + handle : handle, cred:+$("feed-cred").value, interval_s: kind === "X" ? 600 : 300})});
+        toast("Feed added. First check within 15 seconds."); $("feed-name").value = ""; $("feed-handle").value = ""; loadSources(); }
+  catch (err) { toast(err.message, true); }
+};
+setInterval(() => { if (live) { loadReview(); if (activeTab() === "t-feeds") loadSources(); } }, 60e3);
 
 boot();
 </script>
