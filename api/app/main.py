@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import brief as briefmod, gazetteer, ir as irmod, maps, profiles, routing, zones
+from . import brief as briefmod, gazetteer, maps, pipeline, profiles, routing, zones
 from .config import ADMIN_TOKEN, CITY_ID
 from .db import close_pool, conn, open_pool
 
@@ -218,53 +218,14 @@ class PasteIn(BaseModel):
 def advisory_paste(body: PasteIn):
     """Demo moment one: a pasted post becomes a polygon. Returns IR, anchors, zone geometry and the edges affected."""
     ts = body.ts_published or datetime.now(timezone.utc)
-    norm = gazetteer.normalize(body.text)
-    ir = irmod.extract(body.text, norm)
-    if ir is None:
-        return {"ok": False, "reason": "no anchor found by regex or model", "normalized": norm}
-
     with conn() as c:
-        msg_id = ir_id = None
+        msg_id = None
         if body.commit:
-            dedup = hashlib.sha256(f"{norm}|{body.source_handle}|{int(ts.timestamp() // 600)}".encode()).digest()
-            msg_id = c.execute(
-                """
-                INSERT INTO ingest.raw_message (city_id, source_type, source_handle, source_cred, ext_id, ts_published, text_raw, text_norm, dedup_hash)
-                VALUES (%s, 'PASTE', %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (source_type, ext_id) DO UPDATE SET ts_ingested = now()
-                RETURNING msg_id
-                """,
-                (CITY_ID, body.source_handle, body.source_cred, dedup.hex()[:32], ts, body.text, norm, dedup),
-            ).fetchone()["msg_id"]
-            ir_id = c.execute(
-                "INSERT INTO ingest.advisory_ir (msg_id, event_type, cause, ir, model_ver, confidence) VALUES (%s, %s, %s, %s, %s, %s) RETURNING ir_id",
-                (msg_id, ir["event_type"], ir["cause"], json.dumps(ir), ir.get("model_ver", "?"), ir["confidence"]),
-            ).fetchone()["ir_id"]
-        try:
-            z = zones.resolve_zone(c, ir, ts, body.source_cred, CITY_ID)
-        except gazetteer.Unresolved as e:
+            norm = gazetteer.normalize(body.text)
+            ext_id = hashlib.sha256(f"{norm}|{body.source_handle}|{int(ts.timestamp() // 600)}".encode()).hexdigest()[:32]
+            msg_id, _ = pipeline.store_message(c, "PASTE", body.source_handle, body.source_cred, ext_id, ts, body.text, norm, CITY_ID)
             c.commit()
-            return {"ok": False, "reason": f"anchor {e.text!r} did not resolve", "candidates": e.candidates, "ir": ir, "normalized": norm}
-
-        geom_json = c.execute("SELECT ST_AsGeoJSON(ST_GeomFromEWKT(%s))::json AS g", (z.geom_ewkt,)).fetchone()["g"]
-        result = {"status": "DRY_RUN", "zone_id": None, "edges_updated": 0}
-        if body.commit:
-            result = zones.commit_zone(c, z, ir_id, CITY_ID, body.force_status)
-        else:
-            c.commit()
-
-    return {
-        "ok": True,
-        "normalized": norm,
-        "ir": ir,
-        "anchors": [{"text": a.text, "canonical": a.canonical, "feature_class": a.feature_class, "gaz_id": a.gaz_id, "score": round(a.score, 3)} for a in z.anchors],
-        "zone": {
-            **result, "event_type": z.event_type, "cause": z.cause, "method": z.method,
-            "bearing_center": z.bearing_center, "bearing_halfwidth": z.bearing_halfwidth,
-            "profile_mask": z.profile_mask, "penalty_factor": z.penalty_factor, "confidence": z.confidence,
-            "valid_from": z.valid_from, "valid_to": z.valid_to, "h3_cells": len(z.h3_cover), "geometry": geom_json,
-        },
-    }
+        return pipeline.process_sentence(c, msg_id, body.text, body.source_cred, ts, commit=body.commit, force_status=body.force_status)
 
 
 @app.get("/v1/zones")
@@ -427,3 +388,100 @@ def team_route_delete(route_id: int, x_admin_token: Annotated[str | None, Header
     if not n:
         raise HTTPException(404, "route not found")
     return {"removed": route_id}
+
+
+# ---------------------------------------------------------------- sources and review queue
+
+class SourceIn(BaseModel):
+    kind: str = Field(pattern="^(RSS|X)$")
+    name: str = Field(min_length=2, max_length=80)
+    handle: str = Field(min_length=2, max_length=300, description="feed URL for RSS, @handle for X")
+    cred: float = Field(0.75, ge=0, le=1)
+    interval_s: int = Field(300, ge=60, le=86400)
+    fetch_article: bool = True
+
+
+@app.get("/v1/sources")
+def sources():
+    with conn() as c:
+        rows = c.execute(
+            "SELECT source_id, kind, name, handle, cred, interval_s, enabled, last_polled, last_ok, last_error, items_total, zones_total "
+            "FROM ingest.source WHERE city_id = %s ORDER BY kind, name", (CITY_ID,)).fetchall()
+    for r in rows:
+        r["state"] = ("off" if not r["enabled"] else "waiting for first poll" if r["last_polled"] is None
+                      else "needs a key" if (r["last_error"] or "").startswith("skipped") else "failing" if r["last_error"] else "ok")
+    return rows
+
+
+@app.post("/v1/sources")
+def source_add(body: SourceIn, x_admin_token: Annotated[str | None, Header()] = None):
+    _admin(x_admin_token)
+    if body.kind == "RSS" and not body.handle.startswith(("http://", "https://")):
+        raise HTTPException(400, "an RSS source needs the feed URL")
+    with conn() as c:
+        row = c.execute(
+            """
+            INSERT INTO ingest.source (city_id, kind, name, handle, config, cred, interval_s)
+            VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (city_id, kind, handle) DO UPDATE SET name = EXCLUDED.name, cred = EXCLUDED.cred,
+              interval_s = EXCLUDED.interval_s, enabled = true
+            RETURNING source_id
+            """,
+            (CITY_ID, body.kind, body.name, body.handle.strip(), json.dumps({"fetch_article": body.fetch_article}), body.cred, body.interval_s),
+        ).fetchone()
+        c.commit()
+    return {"source_id": row["source_id"]}
+
+
+@app.post("/v1/sources/{source_id}/enabled")
+def source_enable(source_id: int, enabled: bool, x_admin_token: Annotated[str | None, Header()] = None):
+    _admin(x_admin_token)
+    with conn() as c:
+        n = c.execute("UPDATE ingest.source SET enabled = %s WHERE source_id = %s AND city_id = %s", (enabled, source_id, CITY_ID)).rowcount
+        c.commit()
+    if not n:
+        raise HTTPException(404, "source not found")
+    return {"source_id": source_id, "enabled": enabled}
+
+
+@app.get("/v1/review")
+def review_list(limit: int = Query(50, ge=1, le=200)):
+    """Advisory sentences the pipeline could not place, newest first, with the closest gazetteer matches."""
+    with conn() as c:
+        return c.execute(
+            """
+            SELECT r.review_id, r.sentence, r.reason, r.anchor, r.candidates, r.created_at, m.source_type, m.source_handle
+            FROM ingest.review r JOIN ingest.raw_message m USING (msg_id)
+            WHERE r.status = 'OPEN' AND m.city_id = %s ORDER BY r.created_at DESC LIMIT %s
+            """,
+            (CITY_ID, limit),
+        ).fetchall()
+
+
+class ReviewIn(BaseModel):
+    action: str = Field(pattern="^(alias|dismiss)$")
+    gaz_id: int | None = None                     # for action=alias: the place the anchor text means
+
+
+@app.post("/v1/review/{review_id}")
+def review_resolve(review_id: int, body: ReviewIn, x_admin_token: Annotated[str | None, Header()] = None):
+    """alias: teach the gazetteer that this anchor text means gaz_id, then re-run the sentence. dismiss: drop it."""
+    _admin(x_admin_token)
+    with conn() as c:
+        r = c.execute(
+            "SELECT r.*, m.source_cred, m.ts_published FROM ingest.review r JOIN ingest.raw_message m USING (msg_id) WHERE r.review_id = %s AND r.status = 'OPEN'",
+            (review_id,)).fetchone()
+        if r is None:
+            raise HTTPException(404, "review item not found or already closed")
+        if body.action == "dismiss":
+            c.execute("UPDATE ingest.review SET status = 'DISMISSED', resolved_by = 'console' WHERE review_id = %s", (review_id,))
+            c.commit()
+            return {"review_id": review_id, "status": "DISMISSED"}
+        if not body.gaz_id or not r["anchor"]:
+            raise HTTPException(400, "alias needs gaz_id, and the item must have an anchor")
+        c.execute("INSERT INTO geo.gazetteer_alias (alias, gaz_id, weight) VALUES (%s, %s, 1.0) ON CONFLICT (alias, gaz_id) DO UPDATE SET weight = 1.0",
+                  (gazetteer.normalize(r["anchor"]), body.gaz_id))
+        c.execute("UPDATE ingest.review SET status = 'RESOLVED', resolved_by = 'console' WHERE review_id = %s", (review_id,))
+        c.commit()
+        out = pipeline.process_sentence(c, r["msg_id"], r["sentence"], float(r["source_cred"]), r["ts_published"], commit=True)
+    return {"review_id": review_id, "status": "RESOLVED", "rerun": {"ok": out.get("ok"), "zone": (out.get("zone") or {}).get("zone_id"), "reason": out.get("reason")}}

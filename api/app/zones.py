@@ -257,3 +257,34 @@ def expire(c) -> dict:
     n = int(c.execute("SELECT geo.reapply_all_zones() AS n").fetchone()["n"])
     c.commit()
     return {"decaying": decaying, "expired": expired, "edges_reprojected": n}
+
+
+def zone_from_geometry(c, geom_geojson: dict, event_type: str, cause: str, penalty: float, confidence: float,
+                       valid_from: datetime, valid_to: datetime, city_id: int = CITY_ID, buffer_m: float | None = None) -> Zone:
+    """A zone from a source that already carries geometry (TomTom incidents): buffer the line or point, no language step."""
+    import json as _json
+    srid = _utm_srid(c, city_id)
+    cause = cause if cause in BUFFER_M else "UNKNOWN"
+    src = c.execute("SELECT ST_AsEWKT(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)) AS g", (_json.dumps(geom_geojson),)).fetchone()["g"]
+    radius = buffer_m if buffer_m is not None else (BUFFER_M[cause] if geom_geojson["type"] == "LineString" else BUFFER_M[cause] + 60)
+    geom, geom_utm = _buffer_zone(c, src, srid, min(radius, 60) if geom_geojson["type"] == "LineString" else radius, None)
+    return Zone(event_type=event_type, cause=cause, geom_ewkt=geom, geom_utm_ewkt=geom_utm, h3_cover=_h3_cover(c, geom),
+                bearing_center=None, bearing_halfwidth=None, profile_mask=127, penalty_factor=penalty,
+                confidence=round(confidence, 3), valid_from=valid_from, valid_to=valid_to, anchors=[], method="source_geometry")
+
+
+def lift_near(c, anchor: Anchor, radius_m: float = 300.0, city_id: int = CITY_ID) -> list[int]:
+    """A 'restored / cleared' advisory refutes the active zones around its anchor."""
+    rows = c.execute(
+        """
+        UPDATE geo.zone_of_avoidance z SET status = 'REFUTED'
+        WHERE z.city_id = %s AND z.status IN ('ACTIVE','DECAYING','CANDIDATE') AND z.valid_to > now()
+          AND ST_DWithin(z.geom::geography, ST_GeomFromEWKT(%s)::geography, %s)
+        RETURNING zone_id
+        """,
+        (city_id, anchor.geom_wkt, radius_m),
+    ).fetchall()
+    if rows:
+        c.execute("SELECT geo.reapply_all_zones()")
+    c.commit()
+    return [int(r["zone_id"]) for r in rows]

@@ -5,7 +5,7 @@ graph, and gives each vehicle class a proper re-route: a scooter and a car do no
 detour. Backend-first; commuters get alerts over WhatsApp with a Google Maps handoff, fleets get
 an API/SDK. Design, plan and legal review live in the project doc; this repo is the build.
 
-## What works today (v0.1, demo weeks 1 to 4)
+## What works today (v0.4)
 
 | Piece | Where | Status |
 | --- | --- | --- |
@@ -17,10 +17,11 @@ an API/SDK. Design, plan and legal review live in the project doc; this repo is 
 | Advisory → IR: text normalization with abbreviation expansion, regex template extraction, optional constrained-JSON LLM path | `api/app/gazetteer.py`, `api/app/ir.py` | done |
 | IR → zone: deterministic anchor resolution, displaced-corridor geometry, buffers by cause, directional penalty, merge/decay/expiry, projection onto edges | `api/app/zones.py`, `geo.apply_zone()` | done |
 | Console map: routes per profile, paste an advisory and see the polygon, inspect edges, close a gate, refute a zone | `/console` | done |
+| Ingestion worker: source registry, RSS / X / TomTom incidents / Open-Meteo pollers, shared pipeline, review queue, lifted-advisory handling | `api/app/worker.py`, `api/app/ingest/` | done (live endpoints untested from the build sandbox) |
 | Place search by name on the console, saved team routes, daily road brief as page, WhatsApp text and email HTML | `/brief`, `api/app/brief.py` | done |
 
-Next: X/RSS pollers (week 3 of the plan), WhatsApp channel and corridors (weeks 5 to 6),
-telemetry and stall detection (weeks 7 to 8), GraphHopper with `net.turn`.
+Next: review queue and source status in the console, WhatsApp channel and corridors, telemetry and stall
+detection, IMD nowcast adapter, TomTom flow speeds, GraphHopper with `net.turn`.
 
 ## Prerequisites
 
@@ -78,6 +79,38 @@ time, the roads to take instead and a Google Maps link when it is affected.
 "Usual time" is the same trip routed with every zone ignored, so the delay shown is the delay the
 zones cause, not traffic in general.
 
+## Ingestion (the worker)
+
+`docker compose up -d` now also starts a `worker` that polls every source in `ingest.source` when it is due and
+runs the same advisory-to-zone path as the console's paste box. See the status at `/v1/sources`.
+
+| Source kind | What it brings | Needs |
+| --- | --- | --- |
+| `RSS` | News items that quote police advisories; the article's action sentences each become one zone attempt | the feed URL, added with `POST /v1/sources` |
+| `X` | A handle's own posts (no replies, no reposts), polled with `since_id` on pay-per-use credits | `X_BEARER_TOKEN` in `.env`, the handle added with `POST /v1/sources` |
+| `TOMTOM_INCIDENTS` | Closures, road works, flooding and accidents with geometry; closures and flooding commit as active zones | `TOMTOM_KEY` in `.env` (seeded, 20-minute interval) |
+| `OPEN_METEO` | Hourly rain on a 0.05 degree grid into `hydro.rain_cell` | nothing (seeded, hourly; non-commercial use only) |
+
+Add a feed or a handle (admin token):
+
+```bash
+curl -X POST http://127.0.0.1:8080/v1/sources -H "X-Admin-Token: $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"kind":"RSS","name":"Telangana Today Hyderabad","handle":"<feed url>","cred":0.75,"interval_s":300}'
+curl -X POST http://127.0.0.1:8080/v1/sources -H "X-Admin-Token: $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"kind":"X","name":"Hyderabad Traffic Police","handle":"@HYDTP","cred":0.9,"interval_s":600}'
+```
+
+Confirm each outlet's feed URL in a browser before adding it; a wrong URL shows as `failing` in `/v1/sources`.
+
+**Review queue.** A sentence the pipeline cannot place goes to `ingest.review` with the closest gazetteer matches
+(`GET /v1/review`). Resolving it with `{"action":"alias","gaz_id":…}` teaches the gazetteer that spelling and
+re-runs the sentence; `{"action":"dismiss"}` drops it. This is the 20-minutes-a-day human check from the plan.
+
+**The full police form.** "Traffic from A towards B will be diverted at C towards D via E" is read as: the stretch
+C to B is shut; D and E are the way round. The zone covers C to B only.
+
+**Tests.** `make test` runs the parser tests (RSS, X, TomTom, Open-Meteo, advisory sentences) with no network or database.
+
 ## Fine-tuning knobs
 
 | Where | What to tune | Why |
@@ -89,6 +122,16 @@ zones cause, not traffic in general.
 | `zones.BUFFER_M`, `TTL_MIN`, `PENALTY` | per-cause geometry and lifetime | tune against the 100-zone audit |
 | `routing.py` constants (`ZONE_SOFT_MULT`, `UNKNOWN_GATE_COST_S`) | how hard a soft zone or an unknown gate pushes a route away | watch for detours that are longer than the delay they avoid |
 | `ir.py` `_DIVERT`, `_AT`, `_BETWEEN` | the template regexes | add a shape when a frequent post form returns `None`; the LLM path covers the rest |
+
+## Updating this repo from a downloaded zip (Windows)
+
+Each update arrives as `detourai-<version>-update.zip` holding only the files that changed.
+
+1. Download the zip (it lands in Downloads).
+2. In the repo folder, double-click `apply-update.bat`.
+3. It unpacks the newest update zip over the repo, lists the files that changed, and asks before it commits and pushes.
+
+Answer N to stop after the files are in place without committing. Running it twice is harmless: the second run says nothing changed.
 
 ## Layout
 

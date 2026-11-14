@@ -60,6 +60,12 @@ _DIVERT = re.compile(
     rf"(?:(?:via|through|thru)\s+(?P<via>{_ANCHOR}){_END})?\s*"
     rf"(?:(?:due to|because of|owing to|on account of|in view of)\s+(?P<cause>[a-z ]{{3,40}}?))?"
     rf"(?=[.,;:()\n]|$|\s+(?:from|between|till|until|for)\b)", re.I)
+# The full police form: "Traffic from A towards B will be diverted at C towards D via E".
+# The road that is shut is C -> B; D and E describe the detour and never shape the zone.
+_FULL = re.compile(
+    rf"(?:vehicles?|traffic|commuters)\s+(?:coming\s+|proceeding\s+|going\s+)?from\s+(?P<a>{_ANCHOR})\s+(?:towards?|to)\s+(?P<b>{_ANCHOR})\s+"
+    rf"(?:will be\s+|shall be\s+|is\s+|are\s+|being\s+)?(?:diverted|divert)\s+at\s+(?P<c>{_ANCHOR}){_END}"
+    rf"(?:\s+(?:towards?|to)\s+(?P<d>{_ANCHOR}){_END})?(?:\s+(?:via|through|thru)\s+(?P<e>{_ANCHOR}){_END})?", re.I)
 _AT = re.compile(
     rf"(?:water ?logg\w*|flood\w*|inundat\w*|accident|tree fall\w*|closed|blocked|jam|congestion|slow moving|heavy traffic|"
     rf"restored|normal|cleared|lifted|resumed|reopened|opened|free flow)\s+"
@@ -95,7 +101,12 @@ def _scope(norm: str) -> list[str]:
 def regex_ir(norm_text: str) -> dict | None:
     """Template extraction on normalized text. Returns an IR or None if no anchor is found."""
     anchors: list[dict] = []
-    m = _DIVERT.search(norm_text)
+    detour = None
+    full = _FULL.search(norm_text)
+    m = None if full else _DIVERT.search(norm_text)
+    if full:
+        anchors = [{"text": _clean(full.group("c")), "role": "FROM"}, {"text": _clean(full.group("b")), "role": "TO"}]
+        detour = {"towards": _clean(full.group("d")), "via": _clean(full.group("e")), "origin": _clean(full.group("a"))}
     if m:
         for role, key in (("FROM", "from"), ("TO", "to"), ("VIA", "via")):
             v = _clean(m.group(key))
@@ -124,7 +135,7 @@ def regex_ir(norm_text: str) -> dict | None:
         event = "VIP_MOVEMENT"
     elif cause == "GATE":
         event = "GATE_CLOSED"
-    elif m and re.search(r"diverted|divert", m.group(0)):
+    elif full or (m and re.search(r"diverted|divert", m.group(0))):
         event = "DIVERSION"
     elif m:
         event = "CLOSURE"
@@ -141,8 +152,12 @@ def regex_ir(norm_text: str) -> dict | None:
         tw = {"start": t.group(1).strip(), "end": t.group(2).strip()}
     n_roles = len({a["role"] for a in anchors})
     confidence = min(0.95, 0.55 + 0.12 * n_roles + (0.08 if cause != "UNKNOWN" else 0))
-    return {"event_type": event, "anchors": anchors, "cause": cause, "vehicle_scope": _scope(norm_text),
-            "time_window": tw, "confidence": round(confidence, 2), "model_ver": "regex-1"}
+    out = {"event_type": event, "anchors": anchors, "cause": cause, "vehicle_scope": _scope(norm_text),
+           "time_window": tw, "confidence": round(confidence, 2), "model_ver": "regex-1"}
+    if detour:
+        out["detour"] = detour
+        out["confidence"] = min(0.95, out["confidence"] + 0.05)      # the full form leaves the least to guess
+    return out
 
 
 _SYSTEM = (

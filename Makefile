@@ -3,7 +3,7 @@ SHELL := /bin/bash
 DB_URL ?= postgresql://detour:$${DB_PASSWORD:-detour}@127.0.0.1:5432/detour
 PBF ?= data/southern-zone-latest.osm.pbf
 
-.PHONY: up down logs migrate import gazetteer turns smoke psql
+.PHONY: up down logs migrate import gazetteer turns smoke psql test
 
 up:            ## build and start db, redpanda, api
 	docker compose up -d --build
@@ -31,3 +31,6 @@ smoke:         ## 2W vs SUV on a fixed pair of points
 
 psql:
 	psql "$(DB_URL)"
+
+test:          ## parser tests, no network or database (pip install -r api/requirements.txt pytest)
+	python -m pytest -q tests

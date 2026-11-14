@@ -28,8 +28,10 @@ def _place_case(text: str) -> str:
 
 def _where(ir: dict | None, zone_id: int) -> str:
     a = {x["role"]: _place_case(x["text"]) for x in (ir or {}).get("anchors", [])}
+    d = (ir or {}).get("detour") or {}
     if "FROM" in a and "TO" in a:
-        return f"{a['FROM']} to {a['TO']}" + (f", detour via {a['VIA']}" if "VIA" in a else "")
+        via = a.get("VIA") or (_place_case(d["via"]) if d.get("via") else None)
+        return f"{a['FROM']} to {a['TO']}" + (f", detour via {via}" if via else "")
     if "BETWEEN_A" in a and "BETWEEN_B" in a:
         return f"between {a['BETWEEN_A']} and {a['BETWEEN_B']}"
     for role in ("AT", "FROM", "TO"):
