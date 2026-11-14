@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DetourAI console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;800&display=swap" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js"></script>
+<style>
+/* Tokens: Indian road signage. Asphalt ink, concrete ground, diversion-board yellow, informatory blue. */
+:root{
+  --asphalt:#2B2F33; --ink:#2B2F33; --ink-2:#5B636B; --ground:#EEF0F1; --surface:#FFFFFF; --rule:#D5D9DC;
+  --divert:#F2B705; --divert-ink:#1E1A05; --inform:#1456A8; --inform-ink:#FFFFFF; --stop:#C8322B; --go:#1E7B4A;
+  --v-2w:#1E7B4A; --v-car:#1456A8; --v-suv:#6B3FA0; --v-lcv:#B4581A; --v-3w:#00798C;
+  --font:"Overpass","Segoe UI",system-ui,sans-serif;
+  --r-plate:3px; --r-ctl:6px;
+}
+@media (prefers-color-scheme: dark){
+  :root{ color-scheme:dark; --ink:#ECEEEF; --ink-2:#A9B1B8; --ground:#23272B; --surface:#2E3338; --rule:#454C53;
+         --inform:#4C8FE0; --stop:#E5665F; --go:#4FB380; --v-2w:#4FB380; --v-car:#4C8FE0; --v-suv:#A27BD6; --v-lcv:#E08A4A; --v-3w:#3FB3C6; }
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:400 14px/1.45 var(--font);color:var(--ink);background:var(--ground);font-variant-numeric:tabular-nums}
+button,input,textarea{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--divert);outline-offset:2px}
+.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* Shell */
+.shell{display:grid;grid-template-rows:auto 1fr;height:100%}
+.gantry{display:flex;align-items:center;gap:20px;padding:10px 16px;background:var(--asphalt);color:#fff;
+        padding-top:calc(10px + env(safe-area-inset-top,0px))}
+.mark{display:flex;align-items:center;gap:8px;font-weight:800;font-size:19px;letter-spacing:.01em}
+.mark svg{display:block}
+.city{font-weight:600}
+.counts{display:flex;gap:18px;margin-left:auto;color:#C9CED2;font-size:13px}
+.counts b{color:#fff;font-weight:600}
+.gantry .ghost{border:1px solid #6A737B;background:transparent;color:#fff;border-radius:var(--r-ctl);padding:5px 10px;cursor:pointer;text-decoration:none;font:inherit}
+.gactions{display:flex;gap:8px}
+.work{display:grid;grid-template-columns:392px 1fr;min-height:0}
+.panel{display:flex;flex-direction:column;min-height:0;background:var(--ground);border-right:1px solid var(--rule)}
+#map{min-height:0;height:100%}
+
+/* Tabs */
+.tabs{display:flex;padding:0 12px;border-bottom:1px solid var(--rule);background:var(--surface)}
+.tab{border:0;background:none;padding:12px 12px 10px;font-weight:600;color:var(--ink-2);cursor:pointer;border-bottom:3px solid transparent}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--divert)}
+.pane{display:none;overflow:auto;padding:14px 14px 24px;min-height:0;flex:1}
+.pane.on{display:block}
+
+/* Controls */
+label.f{display:block;font-weight:600;font-size:13px;margin:10px 0 4px}
+.hint{color:var(--ink-2);font-size:12.5px}
+.field{display:flex;gap:6px;position:relative}
+.suggest{position:absolute;left:0;right:44px;top:100%;margin:2px 0 0;padding:4px;list-style:none;background:var(--surface);border:1px solid var(--rule);border-radius:var(--r-ctl);z-index:5;box-shadow:0 6px 18px rgba(20,22,24,.18)}
+.suggest li{padding:6px 8px;border-radius:4px;cursor:pointer;display:flex;justify-content:space-between;gap:10px}
+.suggest li[aria-selected="true"],.suggest li:hover{background:var(--ground)}
+.suggest li small{color:var(--ink-2)}
+.linkbtn{border:0;background:none;padding:0;margin:8px 0 0 14px;color:var(--inform);font-weight:600;cursor:pointer}
+.linkbtn:hover{text-decoration:underline}
+input[type=text],input[type=password],textarea{width:100%;background:var(--surface);border:1px solid var(--rule);border-radius:var(--r-ctl);padding:8px 10px}
+textarea{min-height:96px;resize:vertical;line-height:1.4}
+.icon{flex:none;width:38px;border:1px solid var(--rule);background:var(--surface);border-radius:var(--r-ctl);cursor:pointer;display:grid;place-items:center}
+.icon[aria-pressed="true"]{background:var(--divert);border-color:var(--divert);color:var(--divert-ink)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--rule);background:var(--surface);border-radius:999px;padding:5px 11px;cursor:pointer}
+.chip i{width:10px;height:10px;border-radius:50%;background:var(--c)}
+.chip[aria-pressed="true"]{border-color:var(--c);box-shadow:inset 0 0 0 1px var(--c);font-weight:600}
+.chip.plain[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.btn{border:1px solid var(--rule);background:var(--surface);border-radius:var(--r-ctl);padding:8px 14px;font-weight:600;cursor:pointer}
+.btn.go{background:var(--inform);border-color:var(--inform);color:var(--inform-ink)}
+.btn.small{padding:4px 9px;font-size:12.5px}
+.btn:disabled{opacity:.55;cursor:default}
+input[type=range]{width:100%;accent-color:var(--inform)}
+.scale{display:flex;justify-content:space-between;font-size:12px;color:var(--ink-2)}
+
+/* Direction-sign plates: the one loud element */
+.plates{display:grid;gap:8px;margin-top:16px}
+.plate{display:grid;grid-template-columns:8px 1fr;background:var(--surface);border:1px solid var(--rule);border-radius:var(--r-plate);overflow:hidden}
+.plate .band{background:var(--c)}
+.plate .body{padding:10px 12px}
+.plate h3{margin:0;font-size:13px;font-weight:600;color:var(--ink-2)}
+.plate .big{display:flex;align-items:baseline;gap:12px;margin:2px 0 4px}
+.plate .big b{font-size:28px;line-height:1;font-weight:800}
+.plate .big span{font-size:15px;font-weight:600}
+.plate .via{font-size:13.5px}
+.plate .note{font-size:12.5px;color:var(--ink-2);margin-top:4px}
+.plate a{color:var(--inform);font-weight:600;text-decoration:none;display:inline-block;margin-top:8px}
+.plate a:hover{text-decoration:underline}
+.plate.err{grid-template-columns:8px 1fr}.plate.err .band{background:var(--stop)}
+
+/* Diversion boards: zones */
+.board{background:var(--divert);color:var(--divert-ink);border-radius:var(--r-plate);padding:10px 12px;margin-top:8px;
+       border:2px solid var(--divert-ink);cursor:pointer;text-align:left;width:100%;display:block}
+.board.candidate{background:var(--surface);color:var(--ink);border:2px dashed var(--ink-2);position:relative;padding-left:28px}
+.board.candidate::before{content:"";position:absolute;left:0;top:0;bottom:0;width:14px;background:repeating-linear-gradient(135deg,var(--divert) 0 6px,var(--divert-ink) 6px 12px)}
+.board strong{display:block;font-weight:800;font-size:15px}
+.board small{display:block;font-size:12.5px}
+.board .row{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.board .btn{border-color:var(--divert-ink);background:transparent;color:inherit}
+.board.candidate .btn{border-color:var(--rule)}
+
+.read{background:var(--surface);border:1px solid var(--rule);border-radius:var(--r-plate);padding:12px;margin-top:14px}
+.read h3{margin:0 0 6px;font-size:13px;font-weight:600;color:var(--ink-2)}
+.read p{margin:0 0 8px}
+.places{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.places li{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center}
+.places .said{color:var(--ink-2);font-size:12.5px;grid-column:1/-1}
+.meter{width:64px;height:6px;background:var(--rule);border-radius:3px;overflow:hidden}.meter i{display:block;height:100%;background:var(--go)}
+.tagline{display:inline-block;border:1px solid var(--rule);border-radius:3px;padding:0 6px;font-size:12px;color:var(--ink-2);margin-left:6px}
+
+.road{background:var(--surface);border:1px solid var(--rule);border-radius:var(--r-plate);padding:10px 12px;margin-top:8px}
+.road h3{margin:0;font-size:15px;font-weight:600}
+.road dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:6px 0 0;font-size:13px}
+.road dt{color:var(--ink-2)} .road dd{margin:0}
+.empty{color:var(--ink-2);margin-top:16px;max-width:38ch}
+
+/* Map furniture */
+.legend{position:absolute;left:12px;bottom:28px;background:var(--surface);border:1px solid var(--rule);border-radius:var(--r-plate);padding:8px 10px;font-size:12.5px;display:grid;gap:4px;z-index:2}
+.legend span{display:flex;align-items:center;gap:8px}
+.legend i{width:22px;height:4px;border-radius:2px;background:var(--c)}
+.legend i.hatch{height:12px;border-radius:0;background:repeating-linear-gradient(135deg,var(--divert) 0 4px,var(--divert-ink) 4px 8px)}
+.mapwrap{position:relative;min-height:0}
+.pin{width:26px;height:26px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:var(--asphalt);border:2px solid #fff;display:grid;place-items:center;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+.pin b{transform:rotate(45deg);color:#fff;font:800 12px var(--font)}
+.banner{background:var(--divert);color:var(--divert-ink);padding:7px 16px;font-weight:600;font-size:13px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--asphalt);color:#fff;padding:9px 16px;border-radius:var(--r-ctl);z-index:20;max-width:90vw}
+.toast.bad{background:var(--stop)}
+.maplibregl-popup-content{font:400 13px/1.4 var(--font);color:#2B2F33;border-radius:var(--r-plate)}
+dialog{border:1px solid var(--rule);border-radius:var(--r-ctl);background:var(--surface);color:var(--ink);padding:18px;width:min(360px,92vw)}
+dialog::backdrop{background:rgba(20,22,24,.5)}
+dialog h2{margin:0 0 6px;font-size:17px}
+
+@media (max-width:820px){
+  .work{grid-template-columns:1fr;grid-template-rows:46vh 1fr}
+  .panel{order:2;border-right:0;border-top:1px solid var(--rule)}
+  .mapwrap{order:1}
+  .counts{display:none}
+  .gactions{margin-left:auto}
+}
+@media (prefers-reduced-motion:no-preference){ .tab,.chip,.btn{transition:background-color .12s,border-color .12s} }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div class="gantry">
+      <div class="mark" aria-label="DetourAI">
+        <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="3" fill="#F2B705"/><path d="M5 19h5v-8h7" fill="none" stroke="#1E1A05" stroke-width="3"/><path d="M15 6l6 5-6 5z" fill="#1E1A05"/></svg>
+        DetourAI
+      </div>
+      <span class="city" id="city">Hyderabad</span>
+      <div class="counts" aria-live="polite">
+        <span><b id="n-edges">–</b> road stretches</span>
+        <span><b id="n-places">–</b> named places</span>
+        <span><b id="n-zones">–</b> active zones</span>
+      </div>
+      <div class="gactions"><a class="ghost" href="/brief" target="_blank" rel="noopener">Today’s brief</a><button class="ghost" id="admin-open">Admin access</button></div>
+    </div>
+    <div class="banner" id="preview" hidden>Preview data. The DetourAI API is not reachable from this page; start it with “make up” to see live routes and zones.</div>
+  </header>
+
+  <div class="work">
+    <section class="panel" aria-label="Controls">
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="true" aria-controls="p-routes" id="t-routes">Routes</button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="p-adv" id="t-adv">Advisories</button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="p-roads" id="t-roads">Roads</button>
+      </div>
+
+      <div class="pane on" id="p-routes" role="tabpanel" aria-labelledby="t-routes">
+        <label class="f" for="from">From</label>
+        <div class="field"><input type="text" id="from" value="Madhapur" data-ll="17.4486,78.3908" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="sg-from" placeholder="Place name, or pick on the map"><ul class="suggest" id="sg-from" role="listbox" hidden></ul>
+          <button class="icon" id="pick-from" aria-pressed="false" title="Pick the start on the map"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="currentColor"/><path d="M8 0v4M8 12v4M0 8h4M12 8h4" stroke="currentColor" stroke-width="1.6"/></svg><span class="visually-hidden">Pick the start on the map</span></button></div>
+        <label class="f" for="to">To</label>
+        <div class="field"><input type="text" id="to" value="Banjara Hills" data-ll="17.4126,78.4480" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="sg-to" placeholder="Place name, or pick on the map"><ul class="suggest" id="sg-to" role="listbox" hidden></ul>
+          <button class="icon" id="pick-to" aria-pressed="false" title="Pick the destination on the map"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="currentColor"/><path d="M8 0v4M8 12v4M0 8h4M12 8h4" stroke="currentColor" stroke-width="1.6"/></svg><span class="visually-hidden">Pick the destination on the map</span></button></div>
+        <label class="f" id="veh-l">Vehicles to compare</label>
+        <div class="chips" role="group" aria-labelledby="veh-l" id="vehicles"></div>
+        <div class="actions"><button class="btn go" id="compare">Compare routes</button></div>
+        <div class="plates" id="plates" aria-live="polite"></div>
+        <p class="empty" id="routes-empty">Pick two points and the vehicles you run. Each vehicle gets the route its size allows, around today’s zones.</p>
+      </div>
+
+      <div class="pane" id="p-adv" role="tabpanel" aria-labelledby="t-adv">
+        <label class="f" for="post">Paste a traffic advisory</label>
+        <textarea id="post" spellcheck="false">Traffic diverted from Jubilee Hills Check Post towards Madhapur via Road No 36 due to waterlogging</textarea>
+        <div class="chips" id="samples" aria-label="Sample advisories"></div>
+        <label class="f" for="cred">How far do you trust the source?</label>
+        <input type="range" id="cred" min="0.3" max="1" step="0.05" value="0.8">
+        <div class="scale"><span>forwarded message</span><span>local news</span><span>police handle</span></div>
+        <div class="actions">
+          <button class="btn" id="check">Check advisory</button>
+          <button class="btn go" id="add">Add zone to map</button>
+        </div>
+        <div id="reading" aria-live="polite"></div>
+        <label class="f" style="margin-top:20px">Zones in this view <span class="tagline"><label><input type="checkbox" id="cands"> include unconfirmed</label></span></label>
+        <div id="zonelist"></div>
+      </div>
+
+      <div class="pane" id="p-roads" role="tabpanel" aria-labelledby="t-roads">
+        <p class="empty" id="roads-empty" style="margin-top:0">Click a road on the map to see how wide it is, which vehicles fit, and whether a gate is in the way.</p>
+        <div id="roadlist" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <div class="mapwrap">
+      <div id="map" aria-label="Map"></div>
+      <div class="legend" id="legend"></div>
+    </div>
+  </div>
+</div>
+
+<dialog id="admin">
+  <h2>Admin access</h2>
+  <p class="hint">Needed to confirm or refute zones and to close or reopen a road. The token stays in this tab only.</p>
+  <label class="f" for="token">Admin token</label>
+  <input type="password" id="token" autocomplete="off">
+  <div class="actions"><button class="btn go" id="admin-save">Use this token</button><button class="btn" id="admin-cancel">Cancel</button></div>
+</dialog>
+<dialog id="save">
+  <h2>Add to the daily brief</h2>
+  <p class="hint">The brief checks this trip every time it is opened and tells the team when to go another way.</p>
+  <label class="f" for="save-name">Name the team will recognise</label>
+  <input type="text" id="save-name" maxlength="60" autocomplete="off">
+  <div class="actions"><button class="btn go" id="save-ok">Add to the daily brief</button><button class="btn" id="save-cancel">Cancel</button></div>
+</dialog>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+const VEHICLES = [
+  {code:"2W",       name:"Two-wheeler", c:"--v-2w",  on:true},
+  {code:"4W_HATCH", name:"Car",         c:"--v-car", on:true},
+  {code:"4W_SUV",   name:"SUV",         c:"--v-suv", on:false},
+  {code:"3W",       name:"Auto",        c:"--v-3w",  on:false},
+  {code:"LCV",      name:"Light truck", c:"--v-lcv", on:false},
+];
+const SAMPLES = {
+  "Diversion":   "Traffic diverted from Jubilee Hills Check Post towards Madhapur via Road No 36 due to waterlogging",
+  "Waterlogging":"Waterlogging at Tolichowki underpass. Commuters are advised to take alternate routes",
+  "VIP movement":"Traffic restricted between LB Nagar Junction and Nagole due to VIP movement from 10 am to 12 pm",
+  "Cleared":     "Traffic restored and normal at Begumpet after accident cleared",
+};
+const CAUSE_WORDS = {WATERLOGGING:"Waterlogging", VIP:"VIP movement", ROADWORK:"Road work", ACCIDENT:"Accident", PROCESSION:"Procession", TREE_FALL:"Fallen tree", GATE:"Gate closed", UNKNOWN:"Restriction"};
+const METHOD_WORDS = {displaced_corridor:"the stretch the detour replaces", between_corridor:"the stretch between the two places",
+  from_anchor_fallback:"the area around the first place", between_a_fallback:"the area around the first place"};
+const CLASS_WORDS = {JUNCTION:"junction", ROAD:"road", AREA:"area", LANDMARK:"landmark", UNDERPASS:"underpass", FLYOVER:"flyover", SIGNAL:"signal", GATE:"gate", BRIDGE:"bridge"};
+const $ = id => document.getElementById(id);
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const nIN = n => Number(n).toLocaleString("en-IN");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+let token = "", pick = null, live = true, map, markers = {};
+
+/* ---------- preview data, used only when the API is not reachable ---------- */
+const DEMO = {
+  health:{edges:1520000, gazetteer:41200, active_zones:1},
+  compare:{
+    "2W":{distance_m:8420, duration_s:1290, via:["Road No 36","Jubilee Hills Road No 45","KBR Park Road"], edges_only_this_profile:[1,2,3,4,5,6,7,8,9],
+      maps_url:"https://www.google.com/maps/dir/?api=1&destination=17.41260%2C78.44800&travelmode=two-wheeler",
+      geometry:{type:"LineString",coordinates:[[78.3908,17.4486],[78.3962,17.4452],[78.4020,17.4405],[78.4058,17.4352],[78.4096,17.4298],[78.4172,17.4252],[78.4262,17.4214],[78.4349,17.4176],[78.4416,17.4141],[78.4480,17.4126]]}},
+    "4W_HATCH":{distance_m:10950, duration_s:1980, via:["Hitec City Main Road","Road No 1 Banjara Hills","Road No 12"], edges_only_this_profile:[],
+      maps_url:"https://www.google.com/maps/dir/?api=1&destination=17.41260%2C78.44800&travelmode=driving",
+      geometry:{type:"LineString",coordinates:[[78.3908,17.4486],[78.3990,17.4502],[78.4095,17.4489],[78.4190,17.4441],[78.4262,17.4380],[78.4335,17.4322],[78.4398,17.4251],[78.4441,17.4188],[78.4480,17.4126]]}},
+  },
+  zones:{type:"FeatureCollection",features:[{type:"Feature",properties:{zone_id:12,event_type:"DIVERSION",cause:"WATERLOGGING",status:"ACTIVE",penalty_factor:1,confidence:0.85,corroborations:2,valid_to:new Date(Date.now()+2.4*3600e3).toISOString(),
+      ir:{anchors:[{text:"Jubilee Hills Check Post",role:"FROM"},{text:"Madhapur",role:"TO"},{text:"Road No 36",role:"VIA"}]}},
+    geometry:{type:"Polygon",coordinates:[[[78.4082,17.4372],[78.4125,17.4318],[78.4205,17.4282],[78.4216,17.4296],[78.4140,17.4332],[78.4099,17.4384],[78.4082,17.4372]]]}}]},
+  paste:{ok:true, ir:{event_type:"DIVERSION",cause:"WATERLOGGING",vehicle_scope:["ALL"],confidence:0.95,model_ver:"regex-1"},
+    anchors:[{text:"road no 36",canonical:"Road No 36",feature_class:"ROAD",score:0.91},{text:"jubilee hills check post",canonical:"Jubilee Hills Check Post",feature_class:"JUNCTION",score:0.88},{text:"madhapur",canonical:"Madhapur",feature_class:"AREA",score:0.83}],
+    zone:{status:"DRY_RUN",zone_id:null,method:"displaced_corridor",penalty_factor:1,confidence:0.85,bearing_center:312,bearing_halfwidth:45,h3_cells:14,edges_updated:0,valid_to:new Date(Date.now()+3*3600e3).toISOString(),
+      geometry:{type:"Polygon",coordinates:[[[78.4082,17.4372],[78.4125,17.4318],[78.4205,17.4282],[78.4216,17.4296],[78.4140,17.4332],[78.4099,17.4384],[78.4082,17.4372]]]}}},
+  streets:[[[78.3840,17.4500],[78.3908,17.4486],[78.3990,17.4502],[78.4095,17.4489],[78.4190,17.4441],[78.4262,17.4380],[78.4335,17.4322],[78.4398,17.4251],[78.4441,17.4188],[78.4480,17.4126],[78.4520,17.4060]],
+           [[78.3908,17.4486],[78.3962,17.4452],[78.4020,17.4405],[78.4058,17.4352],[78.4096,17.4298],[78.4172,17.4252],[78.4262,17.4214],[78.4349,17.4176],[78.4416,17.4141],[78.4480,17.4126]],
+           [[78.3962,17.4452],[78.4040,17.4420],[78.4090,17.4378],[78.4132,17.4325],[78.4210,17.4289],[78.4300,17.4250],[78.4349,17.4176]],
+           [[78.4095,17.4489],[78.4090,17.4378],[78.4058,17.4352],[78.4010,17.4290],[78.3990,17.4220]],
+           [[78.4190,17.4441],[78.4132,17.4325],[78.4096,17.4298],[78.4080,17.4210]],
+           [[78.4262,17.4380],[78.4210,17.4289],[78.4172,17.4252],[78.4150,17.4170]],
+           [[78.4335,17.4322],[78.4300,17.4250],[78.4262,17.4214],[78.4240,17.4140]],
+           [[78.3860,17.4380],[78.3962,17.4352],[78.4058,17.4352]],[[78.4398,17.4251],[78.4349,17.4176],[78.4330,17.4100]],
+           [[78.3900,17.4300],[78.4010,17.4290],[78.4096,17.4298]],[[78.4300,17.4480],[78.4262,17.4380]],[[78.4441,17.4188],[78.4560,17.4210]]],
+  places:[["Madhapur","area",17.4486,78.3908],["Banjara Hills","area",17.4126,78.4480],["Jubilee Hills Check Post","junction",17.4326,78.4071],["Hitec City","area",17.4435,78.3772],
+          ["Gachibowli","area",17.4401,78.3489],["Kukatpally","area",17.4948,78.3996],["Secunderabad","area",17.4399,78.4983],["Begumpet","area",17.4447,78.4664],["LB Nagar Junction","junction",17.3457,78.5522],["Tolichowki","area",17.3985,78.4162]],
+  roads:[{edge_id:48213,name:"Road No 36 Lane 4",highway:"residential",width_m:3.4,width_src:"CLASS_DEFAULT",open_to:"2W,3W",gate_state:"UNKNOWN",two_wheeler_gap:true,oneway:false},
+         {edge_id:48217,name:"Road No 36",highway:"secondary",width_m:9.0,width_src:"LANES_INFER",open_to:"2W,3W,4W_HATCH,4W_SUV,LCV,HCV,BUS",gate_state:"OPEN",two_wheeler_gap:false,oneway:false}],
+};
+
+async function api(path, opts){
+  if (!live) throw new Error("preview");
+  const r = await fetch(path, opts);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.detail || `The server answered ${r.status}`);
+  return body;
+}
+function toast(msg, bad){ const t = $("toast"); t.textContent = msg; t.className = "toast" + (bad ? " bad" : ""); t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, 4200); }
+
+/* ---------- tabs ---------- */
+document.querySelectorAll(".tab").forEach(tab => tab.onclick = () => {
+  document.querySelectorAll(".tab").forEach(t => t.setAttribute("aria-selected", t === tab));
+  document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === tab.getAttribute("aria-controls")));
+  setPick(null);
+  if (map) map.getCanvas().style.cursor = tab.id === "t-roads" ? "crosshair" : "";
+});
+const activeTab = () => document.querySelector('.tab[aria-selected="true"]').id;
+
+/* ---------- vehicles, samples, legend ---------- */
+$("vehicles").innerHTML = VEHICLES.map(v => `<button class="chip" style="--c:var(${v.c})" aria-pressed="${v.on}" data-code="${v.code}"><i></i>${v.name}</button>`).join("");
+$("vehicles").onclick = e => { const b = e.target.closest(".chip"); if (b) { b.setAttribute("aria-pressed", b.getAttribute("aria-pressed") !== "true"); legend(); } };
+$("samples").innerHTML = Object.keys(SAMPLES).map(k => `<button class="chip plain" data-k="${k}">${k}</button>`).join("");
+$("samples").onclick = e => { const b = e.target.closest(".chip"); if (b) { $("post").value = SAMPLES[b.dataset.k]; $("reading").innerHTML = ""; } };
+function legend(){ const on = [...document.querySelectorAll("#vehicles .chip[aria-pressed=true]")].map(b => b.dataset.code);
+  $("legend").innerHTML = VEHICLES.filter(v => on.includes(v.code)).map(v => `<span><i style="--c:var(${v.c})"></i>${v.name}</span>`).join("") + `<span><i class="hatch"></i>Zone to avoid</span>`; }
+legend();
+
+/* ---------- admin ---------- */
+$("admin-open").onclick = () => $("admin").showModal();
+$("admin-cancel").onclick = () => $("admin").close();
+$("admin-save").onclick = () => { token = $("token").value; $("admin").close(); $("admin-open").textContent = token ? "Admin access on" : "Admin access"; };
+const adminHeaders = () => ({"Content-Type":"application/json", "X-Admin-Token": token});
+function needAdmin(){ if (!live) { toast("Preview data cannot be changed. Start the API to manage zones and roads.", true); return false; }
+  if (!token) { $("admin").showModal(); return false; } return true; }
+
+/* ---------- map ---------- */
+const BLANK = {version:8, sources:{}, layers:[{id:"bg", type:"background", paint:{"background-color":"#E4E7E9"}}]};
+let blank = false;
+async function pickStyle(){
+  try { const c = new AbortController(); setTimeout(() => c.abort(), 4000);
+        const r = await fetch("https://tiles.openfreemap.org/styles/positron", {signal:c.signal}); if (!r.ok) throw 0; return await r.json(); }
+  catch { blank = true; return BLANK; }
+}
+function hatch(alpha){
+  const c = document.createElement("canvas"); c.width = c.height = 16; const x = c.getContext("2d");
+  x.fillStyle = `rgba(242,183,5,${alpha})`; x.fillRect(0,0,16,16); x.strokeStyle = `rgba(30,26,5,${alpha})`; x.lineWidth = 4;
+  for (const o of [-16,0,16]) { x.beginPath(); x.moveTo(o,16); x.lineTo(o+16,0); x.stroke(); }
+  const d = x.getImageData(0,0,16,16); return {width:16, height:16, data:d.data};
+}
+const fc = f => ({type:"FeatureCollection", features:f});
+function pin(letter){ const w = document.createElement("div"); w.innerHTML = `<div class="pin"><b>${letter}</b></div>`; return w; }
+const COORD = /^\s*-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?\s*$/;
+const llOf = id => $(id).dataset.ll || (COORD.test($(id).value) ? $(id).value.replace(/\s/g, "") : null);
+const labelOf = id => COORD.test($(id).value) ? null : $(id).value.trim() || null;
+function setPins(){
+  for (const [k, id, letter] of [["from","from","A"],["to","to","B"]]) {
+    const v = llOf(id); if (!v) continue;
+    const [lat, lng] = v.split(",").map(Number); if (!isFinite(lat) || !isFinite(lng)) continue;
+    if (!markers[k]) markers[k] = new maplibregl.Marker({element:pin(letter), anchor:"bottom", offset:[0,-5]}).setLngLat([lng,lat]).addTo(map);
+    else markers[k].setLngLat([lng,lat]);
+  }
+}
+async function boot(){
+  map = new maplibregl.Map({container:"map", style:await pickStyle(), center:[78.4195,17.4310], zoom:12.6, attributionControl:{compact:true}});
+  map.addControl(new maplibregl.NavigationControl({showCompass:false}), "top-right");
+  map.on("load", async () => {
+    map.addImage("hatch", hatch(0.85)); map.addImage("hatch-soft", hatch(0.35));
+    map.addSource("zones", {type:"geojson", data:fc([])});
+    map.addLayer({id:"zones-fill", type:"fill", source:"zones", paint:{"fill-pattern":["case",["==",["get","status"],"CANDIDATE"],"hatch-soft","hatch"]}});
+    map.addLayer({id:"zones-line", type:"line", source:"zones", filter:["!=",["get","status"],"CANDIDATE"], paint:{"line-color":"#1E1A05","line-width":2}});
+    map.addLayer({id:"zones-line-cand", type:"line", source:"zones", filter:["==",["get","status"],"CANDIDATE"], paint:{"line-color":"#1E1A05","line-width":2,"line-dasharray":[2,2]}});
+    map.addSource("draft", {type:"geojson", data:fc([])});
+    map.addLayer({id:"draft-fill", type:"fill", source:"draft", paint:{"fill-pattern":"hatch-soft"}});
+    map.addLayer({id:"draft-line", type:"line", source:"draft", paint:{"line-color":"#1E1A05","line-width":2,"line-dasharray":[2,2]}});
+    map.addSource("routes", {type:"geojson", data:fc([])});
+    map.addLayer({id:"routes-case", type:"line", source:"routes", layout:{"line-cap":"round","line-join":"round"}, paint:{"line-color":"#fff","line-width":8}});
+    map.addLayer({id:"routes", type:"line", source:"routes", layout:{"line-cap":"round","line-join":"round"}, paint:{"line-color":["get","color"],"line-width":5}});
+    map.addSource("roadhit", {type:"geojson", data:fc([])});
+    map.addLayer({id:"roadhit", type:"line", source:"roadhit", paint:{"line-color":"#F2B705","line-width":7,"line-opacity":.9}});
+    try { const h = await fetch("/healthz").then(r => { if (!r.ok) throw 0; return r.json(); }); showHealth(h); }
+    catch { live = false; $("preview").hidden = false; showHealth(DEMO.health); }
+    if (!live && blank) {      // no API and no basemap: sketch a street network so the preview reads as a map
+      map.addSource("streets", {type:"geojson", data:fc(DEMO.streets.map(c => ({type:"Feature", geometry:{type:"LineString", coordinates:c}, properties:{}})))});
+      map.addLayer({id:"streets", type:"line", source:"streets", layout:{"line-cap":"round","line-join":"round"}, paint:{"line-color":"#fff","line-width":6}}, "zones-fill");
+    }
+    setPins(); loadZones();
+    if (!live) { drawRoutes(DEMO.compare); }
+  });
+  map.on("moveend", loadZones);
+  map.on("click", onMapClick);
+}
+function showHealth(h){ $("n-edges").textContent = nIN(h.edges); $("n-places").textContent = nIN(h.gazetteer); $("n-zones").textContent = nIN(h.active_zones); }
+
+/* ---------- picking points ---------- */
+function setPick(which){ pick = which; $("pick-from").setAttribute("aria-pressed", which === "from"); $("pick-to").setAttribute("aria-pressed", which === "to");
+  if (map) map.getCanvas().style.cursor = which ? "crosshair" : (activeTab() === "t-roads" ? "crosshair" : ""); }
+$("pick-from").onclick = () => setPick(pick === "from" ? null : "from");
+$("pick-to").onclick = () => setPick(pick === "to" ? null : "to");
+["from","to"].forEach(id => {
+  const input = $(id), list = $("sg-" + id); let timer, items = [], sel = -1;
+  const close = () => { list.hidden = true; input.setAttribute("aria-expanded", "false"); sel = -1; };
+  const choose = it => { input.value = it.name; input.dataset.ll = `${it.lat.toFixed(5)},${it.lng.toFixed(5)}`; close(); setPins(); };
+  const show = () => { list.innerHTML = items.map((it, i) => `<li role="option" data-i="${i}" aria-selected="${i === sel}"><span>${esc(it.name)}</span><small>${esc(it.kind)}</small></li>`).join("");
+    list.hidden = !items.length; input.setAttribute("aria-expanded", String(items.length > 0)); };
+  input.addEventListener("input", () => {
+    delete input.dataset.ll; clearTimeout(timer);
+    const q = input.value.trim();
+    if (COORD.test(q)) { close(); setPins(); return; }
+    if (q.length < 3) { close(); return; }
+    timer = setTimeout(async () => {
+      try {
+        if (live) { const d = await api(`/v1/places/resolve?q=${encodeURIComponent(q)}`);
+          items = d.candidates.filter(c => c.centroid).map(c => ({name:c.canonical, kind:CLASS_WORDS[c.feature_class] || "", lat:c.centroid.coordinates[1], lng:c.centroid.coordinates[0]})); }
+        else items = DEMO.places.filter(pl => pl[0].toLowerCase().includes(q.toLowerCase())).map(pl => ({name:pl[0], kind:pl[1], lat:pl[2], lng:pl[3]}));
+        sel = -1; show();
+      } catch { close(); }
+    }, 250);
+  });
+  input.addEventListener("keydown", e => {
+    if (list.hidden) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length; show(); }
+    else if (e.key === "Enter" && sel >= 0) { e.preventDefault(); choose(items[sel]); }
+    else if (e.key === "Escape") close();
+  });
+  list.addEventListener("mousedown", e => { const li = e.target.closest("li"); if (li) { e.preventDefault(); choose(items[+li.dataset.i]); } });
+  input.addEventListener("blur", () => setTimeout(close, 120));
+});
+
+function onMapClick(e){
+  const ll = `${e.lngLat.lat.toFixed(5)},${e.lngLat.lng.toFixed(5)}`;
+  if (pick) { $(pick).value = ll; $(pick).dataset.ll = ll; setPins(); const next = pick === "from" ? "to" : null; setPick(next); if (!next) compare(); return; }
+  if (activeTab() === "t-roads") { inspect(e.lngLat); return; }
+  const hit = map.queryRenderedFeatures(e.point, {layers:["zones-fill"]})[0];
+  if (hit) { document.querySelector("#t-adv").click(); const el = document.querySelector(`[data-zone="${hit.properties.zone_id}"]`); if (el) el.focus(); }
+}
+
+/* ---------- routes ---------- */
+$("compare").onclick = compare;
+async function compare(){
+  const codes = [...document.querySelectorAll("#vehicles .chip[aria-pressed=true]")].map(b => b.dataset.code);
+  if (!codes.length) { toast("Choose at least one vehicle to compare.", true); return; }
+  const a = llOf("from"), b = llOf("to");
+  if (!a || !b) { toast(`Choose the ${!a ? "start" : "destination"} from the list, or pick it on the map.`, true); return; }
+  $("compare").disabled = true; $("compare").textContent = "Comparing…";
+  try {
+    const d = live ? await api(`/v1/route/compare?from=${encodeURIComponent(a)}&to=${encodeURIComponent(b)}&profiles=${codes.join(",")}`)
+                   : Object.fromEntries(Object.entries(DEMO.compare).filter(([k]) => codes.includes(k)));
+    drawRoutes(d);
+  } catch (err) { toast(err.message === "preview" ? "Preview data only." : err.message, true); }
+  finally { $("compare").disabled = false; $("compare").textContent = "Compare routes"; }
+}
+function drawRoutes(d){
+  const feats = [], plates = []; let fastest = Infinity;
+  for (const v of Object.values(d)) if (!v.error) fastest = Math.min(fastest, v.duration_s);
+  for (const [code, v] of Object.entries(d)) {
+    const veh = VEHICLES.find(x => x.code === code) || {name:code, c:"--ink-2"};
+    if (v.error) { plates.push(`<article class="plate err"><div class="band"></div><div class="body"><h3>${esc(veh.name)}</h3><p class="via" style="margin:4px 0 0">${esc(routeError(v.error, veh.name))}</p></div></article>`); continue; }
+    feats.push({type:"Feature", geometry:v.geometry, properties:{color:css(veh.c), code}});
+    const only = (v.edges_only_this_profile || []).length, extra = Math.round((v.duration_s - fastest) / 60);
+    plates.push(`<article class="plate" style="--c:var(${veh.c})"><div class="band"></div><div class="body">
+      <h3>${esc(veh.name)}</h3>
+      <div class="big"><b>${Math.round(v.duration_s/60)} min</b><span>${(v.distance_m/1000).toFixed(1)} km</span></div>
+      ${v.via && v.via.length ? `<div class="via">via ${v.via.map(esc).join(", ")}</div>` : ""}
+      <div class="note">${extra > 0 ? `${extra} min longer than the quickest vehicle. ` : ""}${only ? `Uses ${only} ${only === 1 ? "stretch" : "stretches"} the others cannot.` : ""}</div>
+      <a href="${esc(v.maps_url)}" target="_blank" rel="noopener">Open in Google Maps</a><button class="linkbtn" data-save="${esc(code)}">Add to the daily brief</button></div></article>`);
+  }
+  map.getSource("routes").setData(fc(feats)); $("plates").innerHTML = plates.join(""); $("routes-empty").hidden = plates.length > 0;
+  const pts = feats.flatMap(f => f.geometry.coordinates); if (pts.length) fit(pts);
+}
+function routeError(msg, name){
+  if (/no road open/.test(msg)) return `No road wide enough for a ${name.toLowerCase()} near one of the points. Move the pin closer to a main road.`;
+  if (/no path/.test(msg)) return `No way through for a ${name.toLowerCase()} right now. A zone or a closed road is blocking every option.`;
+  if (/same node/.test(msg)) return "The two points are on the same spot. Move one of them.";
+  return msg;
+}
+function fit(coords){ const xs = coords.map(c => c[0]), ys = coords.map(c => c[1]);
+  map.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]], {padding:70, maxZoom:15.5, duration:500}); }
+
+/* ---------- save a route for the daily brief ---------- */
+let saving = null;
+$("plates").onclick = e => { const b = e.target.closest("[data-save]"); if (!b || !needAdmin()) return;
+  saving = b.dataset.save; const veh = VEHICLES.find(v => v.code === saving);
+  $("save-name").value = `${labelOf("from") || "Start"} to ${labelOf("to") || "destination"}`.slice(0, 60);
+  document.querySelector("#save h2").textContent = `Add this ${veh ? veh.name.toLowerCase() : "vehicle"} route to the daily brief`; $("save").showModal(); $("save-name").select(); };
+$("save-cancel").onclick = () => $("save").close();
+$("save-ok").onclick = async () => {
+  const name = $("save-name").value.trim(); if (name.length < 2) { $("save-name").focus(); return; }
+  try { await api("/v1/team-routes", {method:"POST", headers:adminHeaders(), body:JSON.stringify({name, from:llOf("from"), to:llOf("to"), from_label:labelOf("from"), to_label:labelOf("to"), profile:saving})});
+        $("save").close(); toast("Added to the daily brief"); }
+  catch (err) { toast(err.message, true); }
+};
+
+/* ---------- advisories ---------- */
+$("check").onclick = () => advisory(false);
+$("add").onclick = () => advisory(true);
+async function advisory(commit){
+  if (commit && !live) { toast("Preview data cannot be changed. Start the API to add zones.", true); return; }
+  const btn = commit ? $("add") : $("check"), label = btn.textContent; btn.disabled = true; btn.textContent = commit ? "Adding zone…" : "Checking…";
+  try {
+    const d = live ? await api("/v1/advisories/paste", {method:"POST", headers:{"Content-Type":"application/json"},
+                       body:JSON.stringify({text:$("post").value, source_cred:+$("cred").value, commit})}) : DEMO.paste;
+    showReading(d);
+    if (d.ok && commit) { toast(d.zone.status === "MERGED" ? "Zone merged into an existing one" : d.zone.status === "ACTIVE" ? "Zone added" : "Zone added as unconfirmed"); loadZones(); }
+  } catch (err) { toast(err.message, true); }
+  finally { btn.disabled = false; btn.textContent = label; }
+}
+function showReading(d){
+  if (!d.ok) {
+    const c = (d.candidates || []).map(x => `<li>${esc(x.canonical)} <span class="tagline">${CLASS_WORDS[x.feature_class] || ""}</span></li>`).join("");
+    $("reading").innerHTML = `<div class="read"><h3>Could not place this advisory</h3><p>${esc(humanReason(d.reason))}</p>${c ? `<p class="hint">Closest matches</p><ul class="places">${c}</ul>` : ""}
+      <p class="hint">Add the missing name as an alias, or rewrite the place the way it is signed on the road.</p></div>`;
+    map.getSource("draft").setData(fc([])); return;
+  }
+  const z = d.zone, scope = d.ir.vehicle_scope.includes("ALL") ? "all vehicles" : d.ir.vehicle_scope.join(", ");
+  const until = new Date(z.valid_to).toLocaleTimeString("en-IN", {hour:"numeric", minute:"2-digit"});
+  $("reading").innerHTML = `<div class="read">
+    <h3>What it says</h3><p><strong>${CAUSE_WORDS[d.ir.cause] || "Restriction"}</strong>, ${d.ir.event_type === "LIFTED" ? "now cleared" : d.ir.event_type.toLowerCase().replace("_"," ")}, for ${scope}.</p>
+    <h3>Places found</h3><ul class="places">${d.anchors.map(a => `<li><span>${esc(a.canonical)}<span class="tagline">${CLASS_WORDS[a.feature_class] || ""}</span></span>
+      <span class="meter" title="match ${Math.round(a.score*100)}%"><i style="width:${Math.round(a.score*100)}%"></i></span><span class="said">written as “${esc(a.text)}”</span></li>`).join("")}</ul>
+    <h3 style="margin-top:10px">Zone</h3><p>Covers ${METHOD_WORDS[z.method] || "the area around the place"}${z.bearing_center != null ? ", one direction only" : ""}. ${z.penalty_factor >= 1 ? "Routes will not pass through it." : "Routes pass only when there is no better way."} Holds until about ${until}.</p>
+    <p class="hint">${z.status === "DRY_RUN" ? "Nothing saved yet. “Add zone to map” makes routes avoid it." : z.status === "ACTIVE" ? `Saved as zone ${z.zone_id}; ${nIN(z.edges_updated)} road stretches now avoid it.` : z.status === "MERGED" ? `Merged into zone ${z.zone_id}.` : `Saved as unconfirmed zone ${z.zone_id}; a second source or a review confirms it.`}</p></div>`;
+  map.getSource("draft").setData(z.status === "DRY_RUN" || z.status === "CANDIDATE" ? fc([{type:"Feature", geometry:z.geometry, properties:{}}]) : fc([]));
+  fit(z.geometry.coordinates.flat(z.geometry.type === "MultiPolygon" ? 2 : 1));
+}
+function humanReason(r){ const m = /anchor '(.+)' did not resolve/.exec(r || ""); return m ? `“${m[1]}” is not a place DetourAI knows in this city.` : "No place name was found in the text."; }
+
+$("cands").onchange = loadZones;
+async function loadZones(){
+  if (!map || !map.getSource("zones")) return;
+  let data = DEMO.zones;
+  if (live) { const b = map.getBounds(); if (map.getZoom() < 10) return;
+    try { data = await api(`/v1/zones?bbox=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&include_candidates=${$("cands").checked}`); } catch { return; } }
+  map.getSource("zones").setData(data);
+  $("zonelist").innerHTML = data.features.length ? data.features.map(f => { const p = f.properties, a = (typeof p.ir === "string" ? JSON.parse(p.ir) : p.ir)?.anchors || [];
+      const where = a.length ? a.filter(x => x.role !== "VIA").map(x => x.text).join(" to ") : `zone ${p.zone_id}`;
+      const until = new Date(p.valid_to).toLocaleTimeString("en-IN", {hour:"numeric", minute:"2-digit"});
+      return `<div class="board ${p.status === "CANDIDATE" ? "candidate" : ""}" tabindex="0" data-zone="${p.zone_id}" data-geom='${esc(JSON.stringify(f.geometry))}'>
+        <strong>${CAUSE_WORDS[p.cause] || "Restriction"}</strong><small>${esc(where)}</small>
+        <small>${p.status === "CANDIDATE" ? "Unconfirmed" : p.status === "DECAYING" ? "Clearing" : "Active"} until about ${until}${p.corroborations > 1 ? `, ${p.corroborations} sources` : ""}</small>
+        <div class="row">${p.status === "CANDIDATE" ? `<button class="btn small" data-act="ACTIVE">Confirm</button>` : ""}<button class="btn small" data-act="REFUTED">Mark as wrong</button><button class="btn small" data-act="EXPIRED">Clear now</button></div></div>`; }).join("")
+    : `<p class="empty">No zones in this part of the city. Paste an advisory to add one.</p>`;
+}
+$("zonelist").onclick = async e => {
+  const board = e.target.closest(".board"); if (!board) return;
+  const act = e.target.closest("[data-act]");
+  if (!act) { const g = JSON.parse(board.dataset.geom); fit(g.coordinates.flat(g.type === "MultiPolygon" ? 2 : 1)); return; }
+  if (!needAdmin()) return;
+  try { await api(`/v1/zones/${board.dataset.zone}/status`, {method:"POST", headers:adminHeaders(), body:JSON.stringify({status:act.dataset.act, reviewed_by:"console"})});
+        toast({ACTIVE:"Zone confirmed", REFUTED:"Zone marked as wrong", EXPIRED:"Zone cleared"}[act.dataset.act]); loadZones(); }
+  catch (err) { toast(err.message, true); }
+};
+
+/* ---------- roads ---------- */
+async function inspect(ll){
+  let rows; try { rows = live ? await api(`/v1/edges/near?at=${ll.lat},${ll.lng}&radius_m=50`) : DEMO.roads; } catch (err) { toast(err.message, true); return; }
+  $("roads-empty").hidden = rows.length > 0;
+  map.getSource("roadhit").setData(fc(rows.filter(r => r.geometry).slice(0,1).map(r => ({type:"Feature", geometry:r.geometry, properties:{}}))));
+  const names = c => (c || "").split(",").filter(Boolean).map(x => (VEHICLES.find(v => v.code === x) || {name:{HCV:"Truck",BUS:"Bus"}[x] || x}).name).join(", ") || "no vehicle";
+  const gate = r => r.gate_state === "OPEN" ? "No gate, or open" : r.gate_state === "UNKNOWN" ? "A gate is mapped here; not known if it is open" : r.two_wheeler_gap ? "Closed to cars, two-wheelers get through" : "Closed to everyone";
+  const src = {OSM_TAG:"mapped", LANES_INFER:"from lane count", CLASS_DEFAULT:"estimated from road type", SURVEY:"measured", TELEMETRY:"from vehicle data"};
+  $("roadlist").innerHTML = rows.length ? rows.slice(0,6).map(r => `<div class="road"><h3>${esc(r.name || "Unnamed " + r.highway + " road")}</h3>
+      <dl><dt>Width</dt><dd>${(+r.width_m).toFixed(1)} m, ${src[r.width_src] || ""}</dd><dt>Fits</dt><dd>${esc(names(r.open_to))}</dd><dt>Gate</dt><dd>${gate(r)}</dd></dl>
+      <div class="actions" style="margin-top:8px"><button class="btn small" data-edge="${r.edge_id}" data-state="CLOSED_INFERRED" data-gap="true">Close to cars</button>
+      <button class="btn small" data-edge="${r.edge_id}" data-state="CLOSED_REPORTED" data-gap="false">Close to everyone</button>
+      <button class="btn small" data-edge="${r.edge_id}" data-state="OPEN" data-gap="false">Reopen</button></div></div>`).join("")
+    : `<p class="empty">No road within 50 m of that spot. Click closer to a road.</p>`;
+}
+$("roadlist").onclick = async e => {
+  const b = e.target.closest("[data-edge]"); if (!b || !needAdmin()) return;
+  try { await api("/v1/admin/edges/state", {method:"POST", headers:adminHeaders(), body:JSON.stringify({edge_ids:[+b.dataset.edge], gate_state:b.dataset.state, two_wheeler_gap:b.dataset.gap === "true"})});
+        toast({CLOSED_INFERRED:"Road closed to cars", CLOSED_REPORTED:"Road closed to everyone", OPEN:"Road reopened"}[b.dataset.state]); }
+  catch (err) { toast(err.message, true); }
+};
+
+boot();
+</script>
+</body>
+</html>

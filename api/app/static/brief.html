@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Road brief · DetourAI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{ --asphalt:#2B2F33; --ink:#2B2F33; --ink-2:#5B636B; --ground:#EEF0F1; --surface:#FFFFFF; --rule:#D5D9DC;
+  --divert:#F2B705; --divert-ink:#1E1A05; --inform:#1456A8; --stop:#C8322B; --go:#1E7B4A; --slow:#B4581A;
+  --font:"Overpass","Segoe UI",system-ui,sans-serif; }
+@media (prefers-color-scheme: dark){ :root{ color-scheme:dark; --ink:#ECEEEF; --ink-2:#A9B1B8; --ground:#23272B; --surface:#2E3338; --rule:#454C53; --inform:#4C8FE0; --stop:#E5665F; --go:#4FB380; --slow:#E08A4A; } }
+*{box-sizing:border-box}
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0;font:400 15px/1.5 var(--font);color:var(--ink);background:var(--ground);font-variant-numeric:tabular-nums}
+:focus-visible{outline:3px solid var(--divert);outline-offset:2px}
+.sheet{max-width:640px;margin:0 auto;padding:0 0 48px}
+.mast{background:var(--asphalt);color:#fff;padding:22px 22px 20px}
+.mast .mark{display:flex;align-items:center;gap:8px;font-weight:800;font-size:15px;color:#C9CED2}
+.mast h1{margin:14px 0 2px;font-size:34px;line-height:1.08;font-weight:800;letter-spacing:-.01em}
+.mast p{margin:0;color:#C9CED2}
+.lead{background:var(--surface);padding:18px 22px;font-size:18px;line-height:1.45;border-bottom:1px solid var(--rule)}
+.tools{display:flex;gap:8px;flex-wrap:wrap;padding:14px 22px 0}
+.btn{font:inherit;font-weight:600;font-size:14px;color:inherit;border:1px solid var(--rule);background:var(--surface);border-radius:6px;padding:7px 12px;cursor:pointer;text-decoration:none}
+.btn.go{background:var(--inform);border-color:var(--inform);color:#fff}
+h2{font-size:14px;font-weight:600;color:var(--ink-2);margin:26px 22px 8px}
+.stack{display:grid;gap:8px;padding:0 22px}
+.board{background:var(--divert);color:var(--divert-ink);border:2px solid var(--divert-ink);border-radius:3px;padding:11px 14px}
+.board.clearing{background:var(--surface);color:var(--ink);border:2px dashed var(--ink-2);position:relative;padding-left:28px}
+.board.clearing::before{content:"";position:absolute;left:0;top:0;bottom:0;width:14px;background:repeating-linear-gradient(135deg,var(--divert) 0 6px,var(--divert-ink) 6px 12px)}
+.board strong{display:block;font-size:17px;font-weight:800}
+.board span{display:block;font-size:14px}
+.plate{display:grid;grid-template-columns:8px 1fr;background:var(--surface);border:1px solid var(--rule);border-radius:3px;overflow:hidden}
+.plate .band{background:var(--c,var(--go))}
+.plate .body{padding:11px 14px}
+.plate h3{margin:0;font-size:14px;font-weight:600;color:var(--ink-2)}
+.plate .big{display:flex;align-items:baseline;gap:12px;margin:2px 0 2px}
+.plate .big b{font-size:30px;line-height:1;font-weight:800}
+.plate .big span{font-weight:600}
+.plate p{margin:2px 0 0;font-size:14.5px}
+.plate a{color:var(--inform);font-weight:600;text-decoration:none;display:inline-block;margin-top:8px}
+.plate a:hover{text-decoration:underline}
+.quiet{color:var(--ink-2)}
+.foot{padding:22px;color:var(--ink-2);font-size:13px}
+.banner{background:var(--divert);color:var(--divert-ink);padding:8px 22px;font-weight:600;font-size:13.5px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--asphalt);color:#fff;padding:9px 16px;border-radius:6px}
+@media print{ .tools,.banner,.toast{display:none!important} body{background:#fff} .sheet{max-width:none} .mast{-webkit-print-color-adjust:exact;print-color-adjust:exact} .board{-webkit-print-color-adjust:exact;print-color-adjust:exact} }
+</style>
+</head>
+<body>
+<main class="sheet">
+  <div class="banner" id="preview" hidden>Preview data. Start the DetourAI API to see today’s zones and your team’s routes.</div>
+  <header class="mast">
+    <div class="mark"><svg width="22" height="22" viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="3" fill="#F2B705"/><path d="M5 19h5v-8h7" fill="none" stroke="#1E1A05" stroke-width="3"/><path d="M15 6l6 5-6 5z" fill="#1E1A05"/></svg>DetourAI</div>
+    <h1 id="title">Road brief</h1>
+    <p id="when"></p>
+  </header>
+  <p class="lead" id="lead">Loading today’s brief…</p>
+  <div class="tools">
+    <button class="btn go" id="wa">Copy for WhatsApp</button>
+    <button class="btn" id="mail">Copy as email</button>
+    <button class="btn" id="print">Print</button>
+    <a class="btn" href="/console">Open the map</a>
+  </div>
+  <h2 id="zh">Avoid today</h2>
+  <div class="stack" id="zones"></div>
+  <h2>Your routes</h2>
+  <div class="stack" id="routes"></div>
+  <p class="foot">Suggested routes, checked against today’s advisories. Follow signs and police on the road. Map data © OpenStreetMap contributors.</p>
+</main>
+<div class="toast" id="toast" role="status" hidden></div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+let live = true;
+const DEMO = {city:"Hyderabad", date_label:new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long"}), time_label:"7:30 am",
+  summary:"2 zones to avoid. 2 of your 3 saved routes are affected; the worst is Office run, 12 min over its usual time.",
+  zones:[{cause:"Waterlogging", where:"Jubilee Hills Check Post to Madhapur, detour via Road No 36", who:"all vehicles", until:"9:40 am", clearing:false},
+         {cause:"VIP movement", where:"between LB Nagar Junction and Nagole", who:"cars, light trucks", until:"12:00 pm", clearing:true}],
+  routes:[{name:"Office run", vehicle:"Car", minutes:33, km:10.9, usual_minutes:21, delay_minutes:12, affected:true, via:["Hitec City Main Road","Road No 1 Banjara Hills"], maps_url:"https://www.google.com/maps/dir/?api=1&destination=17.41260%2C78.44800&travelmode=driving"},
+          {name:"Night drop", vehicle:"Two-wheeler", error:"no path", affected:true},
+          {name:"Warehouse to Kukatpally", vehicle:"Light truck", minutes:41, km:17.2, usual_minutes:41, delay_minutes:0, affected:false, via:["NH 65"], maps_url:"#"}]};
+const DEMO_TEXT = "*Hyderabad road brief*\n" + DEMO.date_label + ", 7:30 am\n\n" + DEMO.summary + "\n\n*Avoid (2)*\n• Waterlogging: Jubilee Hills Check Post to Madhapur, detour via Road No 36. Until about 9:40 am\n• VIP movement: between LB Nagar Junction and Nagole. Clearing, until about 12:00 pm (cars, light trucks)\n\n*Your routes*\n• Office run (Car): 33 min, 10.9 km, 12 min over usual\n  Go via Hitec City Main Road, Road No 1 Banjara Hills\n• Night drop (Two-wheeler): no way through right now. Hold or call dispatch.\n• Warehouse to Kukatpally (Light truck): 41 min, 17.2 km, as usual";
+function toast(m){ const t = $("toast"); t.textContent = m; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, 3200); }
+
+function render(b){
+  document.title = `${b.city} road brief · DetourAI`;
+  $("title").textContent = `${b.city} road brief`; $("when").textContent = `${b.date_label}, ${b.time_label}`; $("lead").textContent = b.summary;
+  $("zones").innerHTML = b.zones.length ? b.zones.map(z => `<div class="board ${z.clearing ? "clearing" : ""}"><strong>${esc(z.cause)}</strong><span>${esc(z.where)}</span>
+      <span>${z.clearing ? "Clearing, until" : "Until"} about ${esc(z.until)}${z.who === "all vehicles" ? "" : ", " + esc(z.who)}</span></div>`).join("")
+    : `<p class="quiet">No diversions on record right now.</p>`;
+  $("routes").innerHTML = b.routes.length ? b.routes.map(r => r.error
+      ? `<article class="plate" style="--c:var(--stop)"><div class="band"></div><div class="body"><h3>${esc(r.name)}, ${esc(r.vehicle)}</h3><p>No way through right now. Hold, or call dispatch.</p></div></article>`
+      : `<article class="plate" style="--c:var(${r.affected ? "--slow" : "--go"})"><div class="band"></div><div class="body"><h3>${esc(r.name)}, ${esc(r.vehicle)}</h3>
+          <div class="big"><b>${r.minutes} min</b><span>${r.km} km</span></div>
+          <p>${r.affected ? `${r.delay_minutes} min over its usual ${r.usual_minutes} min.${r.via?.length ? ` Go via ${r.via.map(esc).join(", ")}.` : ""}` : `<span class="quiet">On its usual road.</span>`}</p>
+          ${r.affected ? `<a href="${esc(r.maps_url)}" target="_blank" rel="noopener">Open in Google Maps</a>` : ""}</div></article>`).join("")
+    : `<p class="quiet">No team routes saved yet. On the map, compare a route and choose “Add to the daily brief”.</p>`;
+}
+async function load(){
+  try { const r = await fetch("/v1/brief"); if (!r.ok) throw 0; render(await r.json()); }
+  catch { live = false; $("preview").hidden = false; render(DEMO); }
+}
+$("wa").onclick = async () => {
+  try { const t = live ? await (await fetch("/v1/brief?format=text")).text() : DEMO_TEXT; await navigator.clipboard.writeText(t); toast("Copied. Paste it into your WhatsApp group."); }
+  catch { toast("Copying is blocked here. Open /v1/brief?format=text and copy from there."); }
+};
+$("mail").onclick = async () => {
+  try { const h = live ? await (await fetch("/v1/brief?format=email")).text() : document.querySelector(".sheet").outerHTML;
+        if (window.ClipboardItem) await navigator.clipboard.write([new ClipboardItem({"text/html": new Blob([h], {type:"text/html"}), "text/plain": new Blob([$("lead").textContent], {type:"text/plain"})})]);
+        else await navigator.clipboard.writeText(h);
+        toast("Copied. Paste it into a new email."); }
+  catch { toast("Copying is blocked here. Open /v1/brief?format=email and copy from there."); }
+};
+$("print").onclick = () => window.print();
+load();
+</script>
+</body>
+</html>
