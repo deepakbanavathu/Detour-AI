@@ -218,6 +218,9 @@ dialog h2{margin:0 0 6px;font-size:17px}
       </div>
 
       <div class="pane" id="p-feeds" role="tabpanel" aria-labelledby="t-feeds">
+        <h2 style="margin-top:0">Going out</h2>
+        <div id="channels" aria-live="polite"></div>
+        <h2>Coming in</h2>
         <p class="hint" style="margin-top:0">Where advisories, incidents and rain come from, and whether each one is working.</p>
         <div id="feedlist" aria-live="polite"></div>
         <h2>Add a feed</h2>
@@ -325,6 +328,9 @@ const DEMO = {
     {source_id:3, kind:"TOMTOM_INCIDENTS", name:"TomTom traffic incidents", handle:"", cred:0.8, interval_s:1200, enabled:true, state:"ok", last_polled:new Date(Date.now()-11*60e3).toISOString(), last_error:null, items_total:37, zones_total:14},
     {source_id:4, kind:"OPEN_METEO", name:"Open-Meteo rain grid", handle:"", cred:0.6, interval_s:3600, enabled:true, state:"ok", last_polled:new Date(Date.now()-38*60e3).toISOString(), last_error:null, items_total:2376, zones_total:0},
     {source_id:5, kind:"RSS", name:"Deccan Chronicle, Telangana", handle:"https://example.org/wrong", cred:0.75, interval_s:300, enabled:true, state:"failing", last_polled:new Date(Date.now()-4*60e3).toISOString(), last_error:"Client error '404 Not Found' for url 'https://example.org/wrong'", items_total:0, zones_total:0}],
+  channels:{whatsapp:{configured:true, template:false, webhook_secret:true, active:212, stopped:9, last_24h:{sent:6, delivered:148, read:97, failed:2, fallback_sent:11}},
+    telegram:{configured:true, active:34, stopped:1, last_24h:{sent:41}}, sms:{provider:"log", configured:true, last_24h:{sent:11}},
+    links:{short_links:true, alerts_sent:245, opened:131}},
   places:[["Madhapur","area",17.4486,78.3908],["Banjara Hills","area",17.4126,78.4480],["Jubilee Hills Check Post","junction",17.4326,78.4071],["Hitec City","area",17.4435,78.3772],
           ["Gachibowli","area",17.4401,78.3489],["Kukatpally","area",17.4948,78.3996],["Secunderabad","area",17.4399,78.4983],["Begumpet","area",17.4447,78.4664],["LB Nagar Junction","junction",17.3457,78.5522],["Tolichowki","area",17.3985,78.4162]],
   roads:[{edge_id:48213,name:"Road No 36 Lane 4",highway:"residential",width_m:3.4,width_src:"CLASS_DEFAULT",open_to:"2W,3W",gate_state:"UNKNOWN",two_wheeler_gap:true,oneway:false},
@@ -347,7 +353,7 @@ document.querySelectorAll(".tab").forEach(tab => tab.onclick = () => {
   setPick(null);
   if (map) map.getCanvas().style.cursor = tab.id === "t-roads" ? "crosshair" : "";
   if (tab.id === "t-review") loadReview();
-  if (tab.id === "t-feeds") loadSources();
+  if (tab.id === "t-feeds") { loadChannels(); loadSources(); }
 });
 const activeTab = () => document.querySelector('.tab[aria-selected="true"]').id;
 
@@ -647,6 +653,27 @@ $("reviewlist").addEventListener("input", e => {
   }, 250);
 });
 
+/* ---------- channels: what goes out ---------- */
+async function loadChannels(){
+  let d; try { d = live ? await api("/v1/channels") : DEMO.channels; } catch { return; }
+  const n = (o, k) => nIN((o.last_24h || {})[k] || 0);
+  const wa = d.whatsapp, tg = d.telegram, sm = d.sms;
+  const waState = !wa.configured ? ["Not set up", ""] : !wa.webhook_secret ? ["No webhook secret", "warn"] : !wa.template ? ["No template yet", "warn"] : ["Working", "go"];
+  const row = (name, [word, cls], lines, help) => `<div class="road"><div class="feed-head"><h3>${name}</h3><span class="pill ${cls}">${word}</span></div>
+    ${lines.map(l => `<p class="hint" style="margin:2px 0 0">${l}</p>`).join("")}${help ? `<p class="hint" style="margin:4px 0 0">${help}</p>` : ""}</div>`;
+  $("channels").innerHTML =
+    row("WhatsApp", waState, [`${nIN(wa.active)} subscribers, ${nIN(wa.stopped)} stopped`,
+        `Last 24 hours: ${n(wa, "delivered")} delivered, ${n(wa, "read")} read, ${n(wa, "sent")} awaiting receipt, ${n(wa, "failed")} failed`],
+      !wa.configured ? "Add WHATSAPP_TOKEN and WHATSAPP_PHONE_ID to .env." : !wa.webhook_secret ? "Add WHATSAPP_APP_SECRET so incoming messages can be verified."
+        : !wa.template ? "People who wrote in the last 24 hours get alerts. For everyone else, set WHATSAPP_ALERT_TEMPLATE and PUBLIC_BASE_URL once Meta approves the template." : "") +
+    row("Telegram", tg.configured ? ["Working", "go"] : ["Not set up", ""], [`${nIN(tg.active)} subscribers, ${nIN(tg.stopped)} stopped`, `Last 24 hours: ${n(tg, "sent")} sent, ${n(tg, "failed")} failed`],
+      tg.configured ? "" : "Add TELEGRAM_BOT_TOKEN and TELEGRAM_WEBHOOK_SECRET to .env.") +
+    row("SMS fallback", !sm.configured ? ["Off", ""] : sm.provider === "log" ? ["Recording only", "warn"] : ["Working", "go"],
+      [`Last 24 hours: ${n(sm, "sent")} sent after no WhatsApp receipt, ${n(sm, "failed")} failed`],
+      !sm.configured ? "Set SMS_PROVIDER once the DLT template is approved." : sm.provider === "log" ? "Messages are written to the outbox but not sent. Set SMS_PROVIDER=msg91 to send." : "") +
+    `<p class="hint">${nIN(d.links.opened)} of ${nIN(d.links.alerts_sent)} alerts in the last 24 hours were opened in Google Maps${d.links.short_links ? "" : " (opens are counted only when PUBLIC_BASE_URL is set)"}.</p>`;
+}
+
 /* ---------- feeds ---------- */
 const KIND_WORDS = {RSS:"News feed", X:"X account", TOMTOM_INCIDENTS:"Traffic incidents", OPEN_METEO:"Rain forecast"};
 const STATE_WORDS = {"ok":["Working","go"], "needs a key":["Needs a key","warn"], "failing":["Failing","bad"], "off":["Paused",""], "waiting for first poll":["Starting",""]};
@@ -682,7 +709,7 @@ $("feed-add").onclick = async () => {
         toast("Feed added. First check within 15 seconds."); $("feed-name").value = ""; $("feed-handle").value = ""; loadSources(); }
   catch (err) { toast(err.message, true); }
 };
-setInterval(() => { if (live) { loadReview(); if (activeTab() === "t-feeds") loadSources(); } }, 60e3);
+setInterval(() => { if (live) { loadReview(); if (activeTab() === "t-feeds") { loadChannels(); loadSources(); } } }, 60e3);
 
 boot();
 </script>

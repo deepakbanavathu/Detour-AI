@@ -3,22 +3,29 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import brief as briefmod, gazetteer, maps, packs, pipeline, profiles, routing, zones
-from .config import ADMIN_TOKEN, CITY_ID
+from .channels import chat, fanout, sms, telegram, whatsapp
+from .channels import store as chan_store
+from .config import (ADMIN_TOKEN, CITY_ID, PUBLIC_BASE_URL, SMS_PROVIDER, TELEGRAM_WEBHOOK_SECRET, WHATSAPP_ALERT_TEMPLATE,
+                     WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN)
 from .db import close_pool, conn, open_pool
 
 STATIC = Path(__file__).parent / "static"
+log = logging.getLogger("detour.api")
+OOPS = chat.text("Something went wrong on our side. Please send that again in a minute.")
 
 
 @asynccontextmanager
@@ -543,3 +550,104 @@ def pack_status(route_id: int):
         return packs.status(route_id)
     except LookupError as e:
         raise HTTPException(404, str(e)) from None
+
+
+# ---------------------------------------------------------------- commuter channel: webhooks, short links, status
+
+@app.get("/webhooks/whatsapp")
+def whatsapp_verify(mode: Annotated[str | None, Query(alias="hub.mode")] = None,
+                    token: Annotated[str | None, Query(alias="hub.verify_token")] = None,
+                    challenge: Annotated[str | None, Query(alias="hub.challenge")] = None):
+    """Meta's one-time webhook verification handshake."""
+    if WHATSAPP_VERIFY_TOKEN and mode == "subscribe" and token and secrets.compare_digest(token, WHATSAPP_VERIFY_TOKEN):
+        return PlainTextResponse(challenge or "")
+    raise HTTPException(403, "verification failed")
+
+
+def _whatsapp_process(payload: dict) -> None:
+    msgs, statuses = whatsapp.parse_webhook(payload)
+    with conn() as c:
+        for st in statuses:
+            if st["id"]:
+                fanout.update_status(c, st["id"], st["status"], st["error"])
+        for m in msgs:
+            if not m.get("from") or not m.get("msg_id"):
+                continue
+            fresh = c.execute("INSERT INTO client.inbound_seen (provider_msg_id) VALUES (%s) ON CONFLICT DO NOTHING RETURNING 1", (m["msg_id"],)).fetchone()
+            c.commit()
+            if not fresh:
+                continue                                   # a redelivery of something already handled
+            try:
+                replies = chan_store.handle_inbound(c, "WHATSAPP", m["from"], m)
+            except Exception:
+                c.rollback()
+                log.exception("whatsapp inbound failed")
+                replies = [OOPS]
+            for r in replies:
+                whatsapp.send(whatsapp.render(r, m["from"]))
+
+
+@app.post("/webhooks/whatsapp")
+async def whatsapp_webhook(request: Request):
+    raw = await request.body()
+    if not whatsapp.verify_signature(raw, request.headers.get("x-hub-signature-256"), WHATSAPP_APP_SECRET):
+        raise HTTPException(403, "bad signature")
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        raise HTTPException(400, "not JSON") from None
+    await run_in_threadpool(_whatsapp_process, payload)
+    return {"ok": True}
+
+
+@app.post("/webhooks/telegram")
+def telegram_webhook(update: Annotated[dict, Body()], x_telegram_bot_api_secret_token: Annotated[str | None, Header()] = None):
+    if not TELEGRAM_WEBHOOK_SECRET or not x_telegram_bot_api_secret_token or \
+            not secrets.compare_digest(x_telegram_bot_api_secret_token, TELEGRAM_WEBHOOK_SECRET):
+        raise HTTPException(403, "bad secret")
+    m = telegram.parse_update(update)
+    if m is None or m.get("live"):
+        return {"ok": True}                                # live-location edits are for the route card, not onboarding
+    with conn() as c:
+        try:
+            replies = chan_store.handle_inbound(c, "TELEGRAM", m["from"], m)
+        except Exception:
+            c.rollback()
+            log.exception("telegram inbound failed")
+            replies = [OOPS]
+    for r in replies:
+        telegram.send(telegram.render(r, m["from"]))
+    return {"ok": True}
+
+
+@app.get("/r/{token}")
+def short_link(token: str):
+    """Opens the stored Google Maps link. Only links this server generated can be reached, and only to Google Maps."""
+    with conn() as c:
+        row = c.execute("SELECT target_url FROM client.short_link WHERE token = %s AND expires_at > now()", (token,)).fetchone()
+        if row is None or not row["target_url"].startswith("https://www.google.com/maps/"):
+            raise HTTPException(404, "link not found or expired")
+        c.execute("UPDATE client.alert_sent SET opened_at = COALESCE(opened_at, now()) WHERE token = %s", (token,))
+        c.commit()
+    return RedirectResponse(row["target_url"], status_code=302)
+
+
+@app.get("/v1/channels")
+def channels():
+    """What is switched on, how many people are subscribed, and how the last day's messages fared."""
+    with conn() as c:
+        subs = c.execute("SELECT channel, count(*) FILTER (WHERE stopped_at IS NULL) AS active, count(*) FILTER (WHERE stopped_at IS NOT NULL) AS stopped "
+                         "FROM client.subscriber GROUP BY channel").fetchall()
+        box = c.execute("SELECT channel, status, count(*) AS n FROM client.outbox WHERE created_at > now() - INTERVAL '24 hours' GROUP BY channel, status").fetchall()
+        opened = c.execute("SELECT count(*) FILTER (WHERE opened_at IS NOT NULL) AS opened, count(*) AS sent FROM client.alert_sent WHERE sent_at > now() - INTERVAL '24 hours'").fetchone()
+    by = {r["channel"]: {"active": r["active"], "stopped": r["stopped"]} for r in subs}
+    day: dict[str, dict[str, int]] = {}
+    for r in box:
+        day.setdefault(r["channel"], {})[r["status"].lower()] = r["n"]
+    return {
+        "whatsapp": {"configured": whatsapp.configured(), "template": bool(WHATSAPP_ALERT_TEMPLATE and PUBLIC_BASE_URL), "webhook_secret": bool(WHATSAPP_APP_SECRET),
+                     **by.get("WHATSAPP", {"active": 0, "stopped": 0}), "last_24h": day.get("WHATSAPP", {})},
+        "telegram": {"configured": telegram.configured(), **by.get("TELEGRAM", {"active": 0, "stopped": 0}), "last_24h": day.get("TELEGRAM", {})},
+        "sms": {"provider": SMS_PROVIDER or None, "configured": sms.configured(), "last_24h": day.get("SMS", {})},
+        "links": {"short_links": bool(PUBLIC_BASE_URL), "alerts_sent": opened["sent"], "opened": opened["opened"]},
+    }

@@ -64,6 +64,20 @@ services:
       CITY_ID: "1"
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_MODEL: ${LLM_MODEL:-qwen2.5-7b-instruct-q4}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      PII_KEY: ${PII_KEY:-dev-only-key-change-me}
+      PII_PEPPER: ${PII_PEPPER:-dev-only-pepper-change-me}
+      WHATSAPP_TOKEN: ${WHATSAPP_TOKEN:-}
+      WHATSAPP_PHONE_ID: ${WHATSAPP_PHONE_ID:-}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_ALERT_TEMPLATE: ${WHATSAPP_ALERT_TEMPLATE:-}
+      WHATSAPP_CLEARED_TEMPLATE: ${WHATSAPP_CLEARED_TEMPLATE:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      SMS_PROVIDER: ${SMS_PROVIDER:-}
+      MSG91_AUTHKEY: ${MSG91_AUTHKEY:-}
+      MSG91_TEMPLATE_ID: ${MSG91_TEMPLATE_ID:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"   # lets LLM_BASE_URL=http://host.docker.internal:8000 reach a model server on the host
     depends_on:
@@ -82,6 +96,20 @@ services:
       TOMTOM_KEY: ${TOMTOM_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_MODEL: ${LLM_MODEL:-qwen2.5-7b-instruct-q4}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      PII_KEY: ${PII_KEY:-dev-only-key-change-me}
+      PII_PEPPER: ${PII_PEPPER:-dev-only-pepper-change-me}
+      WHATSAPP_TOKEN: ${WHATSAPP_TOKEN:-}
+      WHATSAPP_PHONE_ID: ${WHATSAPP_PHONE_ID:-}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_ALERT_TEMPLATE: ${WHATSAPP_ALERT_TEMPLATE:-}
+      WHATSAPP_CLEARED_TEMPLATE: ${WHATSAPP_CLEARED_TEMPLATE:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      SMS_PROVIDER: ${SMS_PROVIDER:-}
+      MSG91_AUTHKEY: ${MSG91_AUTHKEY:-}
+      MSG91_TEMPLATE_ID: ${MSG91_TEMPLATE_ID:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

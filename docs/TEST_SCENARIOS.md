@@ -6,10 +6,10 @@ a phone or an account and are run before a demo or a release.
 
 | Suite | Command | Needs | Count |
 | --- | --- | --- | --- |
-| Unit | `make test` | Python only | 54 |
-| SQL parse | `make test-sql` | Python only | 203 statements |
-| Browser (preview data) | `make test-ui` | Playwright + Chromium | 22 |
-| Live end to end | `make test-live` | running stack with Hyderabad imported | 13 |
+| Unit | `make test` | Python only | 96 |
+| SQL parse | `make test-sql` | Python only | 243 statements |
+| Browser (preview data) | `make test-ui` | Playwright + Chromium | 23 |
+| Live end to end | `make test-live` | running stack with Hyderabad imported | 15 |
 
 ## 1. Advisory parsing (text to IR)
 
@@ -156,7 +156,43 @@ a phone or an account and are run before a demo or a release.
 | FD-05 | Pause, resume and Check now on a real feed | worker skips, resumes, polls within 15 s | Manual with the stack up |
 | UI-13 | Five tabs fit the panel and switch | no horizontal scroll | Auto UI `test_five_tabs_fit_the_panel_and_switch` |
 
-## 11. Security and access
+## 11. Commuter channel (WhatsApp, Telegram, SMS fallback)
+
+| Id | Scenario | Expected | Runs |
+| --- | --- | --- | --- |
+| CH-01 | Full onboarding: hi, consent, vehicle, start pin, end pin, travel times | subscribed; effects in order consent, hold_home, hold_work, subscribe | Auto `test_chat.py::test_happy_path_ends_subscribed_with_both_windows` |
+| CH-02 | First message | notice lists what is kept, STOP, DELETE, age; nothing stored | Auto `test_first_message_shows_the_notice_before_anything_is_kept` |
+| CH-03 | Consent declined | state reset, nothing stored | Auto `test_declining_consent_keeps_nothing` |
+| CH-04 | Typed answers instead of buttons | understood | Auto `test_typed_answers_work_as_well_as_buttons` |
+| CH-05 | Wrong input at each step; text where a pin is needed | same question again; explains what is needed | Auto `test_unexpected_input_re_asks_the_same_question`, `test_text_instead_of_a_pin_explains_what_is_needed` |
+| CH-06 | STOP and DELETE at every step | alerts off / everything erased | Auto `test_stop_works_at_every_step`, `test_delete_works_at_every_step_and_resets` (12 cases) |
+| CH-07 | START after STOP | resumes a finished setup; restarts an unfinished one | Auto `test_start_after_stop_resumes_a_finished_setup_and_restarts_an_unfinished_one` |
+| CH-08 | SHOW | describes what is kept, never prints the pins | Auto `test_show_describes_what_is_kept_without_revealing_pins` |
+| CH-09 | RESET | consent kept, corridors cleared, route asked again | Auto `test_reset_keeps_consent_and_asks_for_the_route_again` |
+| CH-10 | Button and body limits | 3 buttons, 20-character titles, 1,024-character body | Auto `test_buttons_respect_whatsapp_limits` |
+| CH-11 | Webhook signature | accepted only for the right secret and exact body | Auto `test_channels.py::test_signature_accepts_only_the_right_secret_and_body` |
+| CH-12 | Webhook parsing: text, button, location, unknown type, delivery and failure statuses | parsed; unknown skipped | Auto `test_webhook_parse_messages_and_statuses` |
+| CH-13 | Provider message id and button id kept apart | two people pressing the same button are not treated as one redelivery | Auto `test_button_reply_id_is_what_the_state_machine_reads` |
+| CH-14 | WhatsApp payloads: text, buttons, location request, template with URL suffix, link button | match the Cloud API shapes | Auto `test_render_each_reply_type`, `test_template_and_link_messages` |
+| CH-15 | No credentials | nothing is sent, the reason is recorded | Auto `test_send_without_credentials_sends_nothing` |
+| CH-16 | Telegram updates and payloads | /start, commands, callback buttons, location, live location flagged, keyboards | Auto `test_telegram_updates`, `test_telegram_render` |
+| CH-17 | Travel window with the half hour before it | boundaries exact | Auto `test_window_includes_the_half_hour_before_it_opens` |
+| CH-18 | Alert wording | four plain lines, no promotional words, way-round line only when there is one | Auto `test_alert_text_reads_as_a_status_update_not_a_promotion` |
+| CH-19 | Template variables | no newlines, no blanks | Auto `test_template_params_have_no_newlines_or_blanks` |
+| CH-20 | SMS fallback text | stands alone, under 300 characters | Auto `test_sms_stands_alone_and_stays_short` |
+| CH-21 | Chat identity | stable per channel, differs across channels, does not contain the number | Auto `test_chat_identity_is_stable_per_channel_and_not_the_number` |
+| CH-22 | Unsigned webhook calls, wrong verify token, unknown short link | 403, 403, 404 | Auto live `test_webhooks_reject_unsigned_calls_and_unknown_links` |
+| CH-23 | Channel status endpoint | counts and flags present | Auto live `test_channel_status_shape` |
+| CH-24 | Console shows outgoing channels with the next step for each | pills and help lines | Auto UI `test_feeds_tab_shows_outgoing_channels_with_next_step` |
+| CH-25 | Real WhatsApp onboarding on the test number | pins accepted, corridor rows written, same pin twice refused, no-road pair re-asked | Manual |
+| CH-26 | Zone on a subscriber's corridor inside their window | one alert with a link that opens the detour; none outside the window, in the wrong direction, or for the wrong vehicle | Manual |
+| CH-27 | Daily cap and duplicates | at most 4 alerts in 20 hours; one per zone | Manual |
+| CH-28 | Zone refuted or expired after an alert | one cleared message to the same people | Manual |
+| CH-29 | Phone with data off | no delivery receipt in 60 s, SMS goes out, later receipt does not send a second SMS | Manual (needs DLT template) |
+| CH-30 | Meta redelivers a webhook | processed once | Manual: replay the same payload |
+| CH-31 | DELETE on a live subscriber | subscriber, corridors, alerts and outbox rows gone | Manual: check the tables |
+
+## 12. Security and access
 
 | Id | Scenario | Expected | Runs |
 | --- | --- | --- | --- |

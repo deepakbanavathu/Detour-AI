@@ -23,3 +23,22 @@ LLM_TIMEOUT_S = float(os.environ.get("LLM_TIMEOUT_S", "20"))
 
 # Routing retries: widen the search window this many times when no path is found
 ROUTE_BBOX_RETRIES = 2
+
+# Commuter channel. Every value is optional: with none set, the channel code runs but sends nothing.
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")      # e.g. https://d.example.in ; used for short links
+PII_KEY = os.environ.get("PII_KEY", "dev-only-key-change-me")            # pgcrypto key for phone numbers and pins
+PII_PEPPER = os.environ.get("PII_PEPPER", "dev-only-pepper-change-me")   # HMAC pepper for channel ids
+WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
+WHATSAPP_PHONE_ID = os.environ.get("WHATSAPP_PHONE_ID", "")
+WHATSAPP_APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET", "")
+WHATSAPP_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
+WHATSAPP_API_VERSION = os.environ.get("WHATSAPP_API_VERSION", "v25.0")
+WHATSAPP_ALERT_TEMPLATE = os.environ.get("WHATSAPP_ALERT_TEMPLATE", "")      # approved utility template name
+WHATSAPP_CLEARED_TEMPLATE = os.environ.get("WHATSAPP_CLEARED_TEMPLATE", "")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+SMS_PROVIDER = os.environ.get("SMS_PROVIDER", "")                            # '' = no fallback, 'log' = record only, 'msg91'
+MSG91_AUTHKEY = os.environ.get("MSG91_AUTHKEY", "")
+MSG91_TEMPLATE_ID = os.environ.get("MSG91_TEMPLATE_ID", "")
+SMS_FALLBACK_AFTER_S = int(os.environ.get("SMS_FALLBACK_AFTER_S", "60"))
+ALERTS_PER_DAY = int(os.environ.get("ALERTS_PER_DAY", "4"))                  # 2 per window, two windows

@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timezone
 
 from . import pipeline, zones
+from .channels import fanout
 from .config import CITY_ID
 from .db import close_pool, conn, open_pool
 from .ingest import openmeteo, rss, tomtom, xapi
@@ -150,6 +151,13 @@ def main() -> None:
                 if time.monotonic() - last_expire > EXPIRE_EVERY_S:
                     log.info("expiry pass: %s", zones.expire(c))
                     last_expire = time.monotonic()
+                try:
+                    sent = fanout.tick(c)                       # new zones out, cleared notices, SMS fallbacks
+                    if any(sent.values()):
+                        log.info("channel: %s", sent)
+                except Exception:
+                    c.rollback()
+                    log.exception("fan-out failed")
             time.sleep(TICK_S)
     finally:
         close_pool()

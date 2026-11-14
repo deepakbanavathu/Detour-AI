@@ -143,6 +143,21 @@ def test_unplaceable_advisory_lands_in_review_and_can_be_dismissed(api):
     assert not [r for r in api.get("/v1/review").json() if r["review_id"] == rid]
 
 
+def test_webhooks_reject_unsigned_calls_and_unknown_links(api):
+    assert api.get("/webhooks/whatsapp", params={"hub.mode": "subscribe", "hub.verify_token": "wrong", "hub.challenge": "1"}).status_code == 403
+    assert api.post("/webhooks/whatsapp", content=b'{"entry":[]}', headers={"X-Hub-Signature-256": "sha256=00"}).status_code == 403
+    assert api.post("/webhooks/whatsapp", content=b'{"entry":[]}').status_code == 403
+    assert api.post("/webhooks/telegram", json={"message": {"chat": {"id": 1}, "text": "hi"}}).status_code == 403
+    assert api.get("/r/not-a-real-token", follow_redirects=False).status_code == 404
+
+
+def test_channel_status_shape(api):
+    d = api.get("/v1/channels").json()
+    assert set(d) == {"whatsapp", "telegram", "sms", "links"}
+    assert isinstance(d["whatsapp"]["configured"], bool) and isinstance(d["whatsapp"]["active"], int)
+    assert isinstance(d["links"]["alerts_sent"], int)
+
+
 def test_pages_are_served(api):
     for path in ("/console", "/brief", "/card/1", "/sw.js"):
         r = api.get(path)

@@ -250,3 +250,16 @@ def test_five_tabs_fit_the_panel_and_switch(open_page):
         p.click(tab)
         assert p.is_visible(pane)
     assert p.errors == []
+
+
+def test_feeds_tab_shows_outgoing_channels_with_next_step(open_page):
+    p = open_page("console.html")
+    p.wait_for_selector(".plate")
+    p.click("#t-feeds")
+    p.wait_for_selector("#channels .road")
+    assert p.locator("#channels .road").count() == 3
+    assert p.locator("#channels .pill").all_inner_texts() == ["No template yet", "Working", "Recording only"]
+    text = p.inner_text("#channels")
+    assert "212 subscribers, 9 stopped" in text and "148 delivered, 97 read" in text
+    assert "set WHATSAPP_ALERT_TEMPLATE and PUBLIC_BASE_URL" in text and "SMS_PROVIDER=msg91" in text
+    assert "131 of 245 alerts in the last 24 hours were opened in Google Maps" in text

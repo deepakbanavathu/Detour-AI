@@ -5,7 +5,7 @@ graph, and gives each vehicle class a proper re-route: a scooter and a car do no
 detour. Backend-first; commuters get alerts over WhatsApp with a Google Maps handoff, fleets get
 an API/SDK. Design, plan and legal review live in the project doc; this repo is the build.
 
-## What works today (v0.6)
+## What works today (v0.7)
 
 | Piece | Where | Status |
 | --- | --- | --- |
@@ -19,9 +19,10 @@ an API/SDK. Design, plan and legal review live in the project doc; this repo is 
 | Console map: routes per profile, paste an advisory and see the polygon, inspect edges, close a gate, refute a zone | `/console` | done |
 | Ingestion worker: source registry, RSS / X / TomTom incidents / Open-Meteo pollers, shared pipeline, review queue, lifted-advisory handling | `api/app/worker.py`, `api/app/ingest/` | done (live endpoints untested from the build sandbox) |
 | Route packs: up to three size-valid alternates per saved route, turn lists, decision points, best-now status; offline route card with GPS guidance, voice, `#A/#B/#C` links and the crawl rule | `api/app/packs.py`, `/card/{route_id}` | done (corridor basemap for offline not yet bundled) |
+| Commuter channel: WhatsApp and Telegram onboarding (consent, vehicle, two pins, travel times), encrypted pins and ids, corridor matching, alert fan-out with Maps button, cleared notices, daily cap, SMS fallback on missing delivery receipt, short links, channel status | `api/app/channels/`, `/webhooks/*`, `/r/{token}`, `/v1/channels` | done (not yet run against live Meta, Telegram or SMS accounts) |
 | Place search by name on the console, saved team routes, daily road brief as page, WhatsApp text and email HTML | `/brief`, `api/app/brief.py` | done |
 
-Next: WhatsApp channel with SMS fallback, offline corridor basemap for the card, telemetry and stall detection, IMD nowcast adapter, GraphHopper with `net.turn`.
+Next: offline corridor basemap for the card, telemetry and stall detection, IMD nowcast adapter, GraphHopper with `net.turn`.
 
 ## Prerequisites
 
@@ -84,6 +85,16 @@ time, the roads to take instead and a Google Maps link when it is affected.
 "Usual time" is the same trip routed with every zone ignored, so the delay shown is the delay the
 zones cause, not traffic in general.
 
+## Commuter channel
+
+People subscribe by chatting: hi, accept the notice, pick a vehicle, share a start pin and an end pin, pick travel
+times. DetourAI keeps a corridor of H3 cells per direction and the two pins encrypted; it never tracks position. A
+zone that touches a corridor in its travel window produces one message with a Google Maps button, and one cleared
+message when it ends. A WhatsApp alert with no delivery receipt after 60 seconds is repeated by SMS.
+
+Setup, including the two template texts to submit to Meta, is in `docs/CHANNEL_SETUP.md`. With nothing configured
+the code runs and sends nothing; the console's Feeds tab shows each channel's state and its next step.
+
 ## Route packs and the offline card
 
 ![Route card](docs/card.png)
@@ -102,10 +113,10 @@ plain background.
 
 | Command | What it runs |
 | --- | --- |
-| `make test` | 54 unit tests: advisory parser, normalization, Maps handoff, brief, packs, routing SQL, feed parsers |
+| `make test` | 96 unit tests: advisory parser, normalization, Maps handoff, brief, packs, routing SQL, feed parsers, onboarding conversation, channel adapters |
 | `make test-sql` | every SQL file and embedded statement through PostgreSQL's parser |
-| `make test-ui` | 22 browser tests of the console (routes, advisories, review, roads, feeds), brief and route card on preview data |
-| `make test-live` | 13 end-to-end tests against the running stack (skipped when it is down) |
+| `make test-ui` | 23 browser tests of the console (routes, advisories, review, roads, feeds), brief and route card on preview data |
+| `make test-live` | 15 end-to-end tests against the running stack (skipped when it is down) |
 
 `pip install -r requirements-dev.txt` and `python -m playwright install chromium` set up the tools. GitHub Actions
 runs the first three on every push (`.github/workflows/tests.yml`). The scenario catalogue, with manual checks for
