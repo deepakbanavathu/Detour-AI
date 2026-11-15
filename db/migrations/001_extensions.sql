@@ -2,6 +2,7 @@
 -- and h3_polygon_to_cells(geometry, int); plain h3 only takes PostgreSQL points.
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS pgrouting;
+CREATE EXTENSION IF NOT EXISTS postgis_raster;   -- h3_postgis 4.x depends on it
 CREATE EXTENSION IF NOT EXISTS h3;
 CREATE EXTENSION IF NOT EXISTS h3_postgis;
 CREATE EXTENSION IF NOT EXISTS timescaledb;

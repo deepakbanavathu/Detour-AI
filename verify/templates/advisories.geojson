@@ -1,0 +1,25 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "example-delete-me",
+        "text": "Traffic diverted from Jubilee Hills Check Post towards Madhapur via Road No 36 due to waterlogging",
+        "source": "@HYDTP",
+        "posted_at": "2026-08-14T08:10:00+05:30",
+        "url": "https://x.com/HYDTP/status/...",
+        "expect": "zone",
+        "anchors": "Jubilee Hills Check Post; Madhapur; Road No 36",
+        "note": "geometry = the stretch that was actually shut, drawn along the road"
+      },
+      "geometry": {"type": "LineString", "coordinates": [[78.4071, 17.4326], [78.4040, 17.4352], [78.3990, 17.4390]]}
+    },
+    {
+      "type": "Feature",
+      "properties": {"id": "example-negative", "text": "Traffic police conducted a special drive against wrong side driving", "source": "@HYDTP",
+                     "posted_at": "2026-08-14T09:00:00+05:30", "expect": "none"},
+      "geometry": null
+    }
+  ]
+}

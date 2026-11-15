@@ -76,23 +76,45 @@ class Unresolved(Exception):
 
 _RESOLVE_SQL = """
 SELECT g.gaz_id, g.canonical, g.feature_class, ST_AsEWKT(g.geom) AS geom_wkt,
-       0.55 * similarity(a.alias, %(q)s) * a.weight
-     + 0.25 * COALESCE(1 - LEAST(ST_Distance(g.geom::geography, ST_GeomFromEWKT(%(near)s)::geography), 15000) / 15000, 0.5)
+       ST_Y(ST_Centroid(g.geom)) AS clat, ST_X(ST_Centroid(g.geom)) AS clng,
+       0.55 * similarity(a.alias, %(q)s::text) * a.weight
+     -- no reference point: neutral 0.5. (LEAST ignores NULLs, so COALESCE around it would score 0, not 0.5.)
+     + 0.25 * CASE WHEN %(near)s::text IS NULL THEN 0.5
+                   ELSE 1 - LEAST(ST_Distance(g.geom::geography, ST_GeomFromEWKT(%(near)s::text)::geography), 15000) / 15000 END
      + 0.10 * LEAST(g.popularity / 8, 1)
-     + 0.10 * (g.beat_zone IS NOT DISTINCT FROM %(beat)s AND %(beat)s IS NOT NULL)::int AS score
+     + 0.10 * (g.beat_zone IS NOT DISTINCT FROM %(beat)s::text AND %(beat)s::text IS NOT NULL)::int AS score
 FROM geo.gazetteer_alias a JOIN geo.gazetteer g USING (gaz_id)
-WHERE g.city_id = %(city)s AND a.alias %% %(q)s
-  AND (%(within)s IS NULL OR ST_DWithin(g.geom::geography, ST_GeomFromEWKT(%(within)s)::geography, 1200))
+WHERE g.city_id = %(city)s::smallint AND a.alias %% %(q)s::text
+  AND (%(within)s::text IS NULL OR ST_DWithin(g.geom::geography, ST_GeomFromEWKT(%(within)s::text)::geography, 1200))
 ORDER BY score DESC
-LIMIT 5
+LIMIT 8
 """
+
+# More specific classes win when one place is stored twice (a named underpass is also a named road).
+_CLASS_RANK = {"UNDERPASS": 0, "FLYOVER": 0, "BRIDGE": 0, "JUNCTION": 1, "SIGNAL": 1, "GATE": 1, "LANDMARK": 2, "AREA": 3, "ROAD": 4}
+SAME_PLACE_M = 300.0
+
+
+def _collapse(rows: list[dict]) -> list[dict]:
+    """Merge candidates that are the same name at the same place, keeping the best score and the most specific class."""
+    import math
+    out: list[dict] = []
+    for r in rows:
+        twin = next((o for o in out if o["canonical"].lower() == r["canonical"].lower() and
+                     math.hypot((o["clat"] - r["clat"]) * 110540, (o["clng"] - r["clng"]) * 111320 * math.cos(math.radians(r["clat"]))) <= SAME_PLACE_M), None)
+        if twin is None:
+            out.append(dict(r))
+        elif _CLASS_RANK.get(r["feature_class"], 5) < _CLASS_RANK.get(twin["feature_class"], 5):
+            twin.update({k: r[k] for k in ("gaz_id", "feature_class", "geom_wkt", "clat", "clng")})
+            twin["score"] = max(float(twin["score"]), float(r["score"]))
+    return out
 
 
 def resolve(c, text: str, city_id: int = CITY_ID, near_wkt: str | None = None,
             beat: str | None = None, within_wkt: str | None = None) -> Anchor:
     """Resolve an anchor string to one gazetteer feature or raise Unresolved with the candidates."""
     q = normalize(text, city_id)
-    rows = c.execute(_RESOLVE_SQL, {"q": q, "near": near_wkt, "beat": beat, "city": city_id, "within": within_wkt}).fetchall()
+    rows = _collapse(c.execute(_RESOLVE_SQL, {"q": q, "near": near_wkt, "beat": beat, "city": city_id, "within": within_wkt}).fetchall())
     if not rows:
         raise Unresolved(text, [])
     top = rows[0]
@@ -105,5 +127,5 @@ def resolve(c, text: str, city_id: int = CITY_ID, near_wkt: str | None = None,
 
 def candidates(c, text: str, city_id: int = CITY_ID, limit: int = 5) -> list[dict]:
     q = normalize(text, city_id)
-    rows = c.execute(_RESOLVE_SQL, {"q": q, "near": None, "beat": None, "city": city_id, "within": None}).fetchall()
-    return [dict(r) for r in rows[:limit]]
+    rows = _collapse(c.execute(_RESOLVE_SQL, {"q": q, "near": None, "beat": None, "city": city_id, "within": None}).fetchall())
+    return rows[:limit]

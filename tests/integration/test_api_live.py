@@ -56,7 +56,7 @@ def test_bad_inputs_are_rejected(api):
 
 def test_admin_endpoints_need_the_token(api):
     assert api.post("/v1/admin/edges/state", json={"edge_ids": [1], "gate_state": "OPEN"}).status_code == 401
-    assert api.post("/v1/team-routes", json={"name": "x", "from": A, "to": B}).status_code == 401
+    assert api.post("/v1/team-routes", json={"name": "xx", "from": A, "to": B}).status_code == 401
     assert api.post("/v1/zones/1/status", json={"status": "REFUTED"}).status_code == 401
 
 

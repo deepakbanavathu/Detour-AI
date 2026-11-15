@@ -1,0 +1,4 @@
+id,lat,lng,width_m,scooter_passes,car_passes,a_lat,a_lng,b_lat,b_lng,notes
+# one row per narrow gate, bollard gap or lane you measured. width_m: narrowest clear width between fixed obstacles, in metres
+# scooter_passes / car_passes: yes or no, as you saw it. a_ and b_: a point on a public road on each side, 100 to 300 m away
+# example (delete it): g01,17.4012,78.5231,1.45,yes,no,17.4005,78.5220,17.4020,78.5242,colony gate open 6am-10pm photo IMG_2231

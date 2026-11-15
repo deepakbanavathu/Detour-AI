@@ -7,3 +7,10 @@ __pycache__/
 .pytest_cache/
 .update-message.txt
 .update-delete.txt
+# verification: your own trips, home pins and collected posts stay on your machine
+verify/inputs/*
+!verify/inputs/README.md
+verify/work/
+verify/reports/*
+!verify/reports/.gitkeep
+verify/review/

@@ -8,6 +8,7 @@ from .config import DATABASE_URL
 
 def _configure(c) -> None:
     c.execute("SET pg_trgm.similarity_threshold = 0.45")   # the % operator threshold used by the gazetteer
+    c.commit()                                              # the pool rejects a connection left inside a transaction
 
 
 pool = ConnectionPool(conninfo=DATABASE_URL, min_size=1, max_size=8, open=False,

@@ -1,0 +1,10 @@
+{
+  "_about": "Failures found by this verification and understood, not yet fixed (fixing them changes routing behaviour, which is a decision, not a test). A criterion listed here reports as known_issue instead of fail and is still printed in the summary. Delete an entry when its fix lands; the check then guards the fix.",
+  "issues": [
+    {"id": "V03", "summary": "net.static_mask ignores OSM access tags: motorcycle=no does not close an edge to two-wheelers. Fix in build_network.sql (fold access tags into the mask) and keep motor_vehicle/vehicle in detour.lua.", "found": "2026-11-15, synthetic fixture"},
+    {"id": "V04", "summary": "Same cause as V03 for motorcar=no and access=no.", "found": "2026-11-15, by reading the mask rule"},
+    {"id": "V05", "summary": "Same cause as V03 for hgv=no.", "found": "2026-11-15, by reading the mask rule"},
+    {"id": "V07", "summary": "On two-way edges the mask requires room for an oncoming car beside the vehicle (width + 2.2 m), so a scooter is barred from any two-way lane under 3.0 m, including the gate gaps it actually uses. Needs a separate rule for single-file passages.", "found": "2026-11-15, synthetic fixture"},
+    {"id": "I05", "summary": "build_network.sql starts with TRUNCATE net.* CASCADE, which also empties net.gate (hand-mapped gates), hydro.sink and telemetry.hpvse_alert. A re-import must keep them, e.g. by re-attaching on OSM node ids instead of cascading.", "found": "2026-11-15, synthetic fixture"}
+  ]
+}

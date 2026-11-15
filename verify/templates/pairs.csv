@@ -1,0 +1,4 @@
+id,from_label,from_lat,from_lng,to_label,to_lat,to_lng,vehicle,usual_minutes,usual_via,gpx
+# one row per trip you know well. vehicle: 2w, car or both. usual_via: roads you take, separated by ; (as signed or as everyone calls them)
+# usual_minutes: what the trip usually takes you at the time you normally make it. gpx: file name in inputs/gpx if you recorded this trip
+# example (delete it): p01,Ramanthapur home,17.3990,78.5260,Uppal X Roads,17.4010,78.5590,both,15,Uppal Main Road,p01_2w.gpx

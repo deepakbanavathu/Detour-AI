@@ -1,0 +1,63 @@
+{
+  "_about": "Pass and fail thresholds for verify.py. Written before the checks. 'estimate': true marks a number chosen by judgement, not measured; change it only with a written reason in the commit message. 'hard': the property must hold exactly.",
+  "criteria": [
+    {"id": "G01", "group": "graph", "metric": "invalid_geometries", "op": "==", "threshold": 0, "estimate": false, "why": "an invalid line cannot be routed or buffered"},
+    {"id": "G02", "group": "graph", "metric": "edges_with_fewer_than_2_points", "op": "==", "threshold": 0, "estimate": false, "why": "an edge is a line"},
+    {"id": "G03", "group": "graph", "metric": "length_mismatch_over_1m", "op": "==", "threshold": 0, "estimate": false, "why": "stored length must equal the geodesic length of the stored line"},
+    {"id": "G04", "group": "graph", "metric": "endpoint_mismatch_over_half_m", "op": "==", "threshold": 0, "estimate": false, "why": "each edge must start at its src node and end at its dst node; a reversed one-way or a bad split breaks this"},
+    {"id": "G05", "group": "graph", "metric": "duplicate_edges", "op": "==", "threshold": 0, "estimate": false, "why": "same nodes and same line twice doubles weights"},
+    {"id": "G06", "group": "graph", "metric": "short_edges_under_half_m_share", "op": "<=", "threshold": 0.001, "estimate": true, "why": "near-zero edges come from duplicated OSM nodes; a few are normal"},
+    {"id": "G07", "group": "graph", "metric": "edges_missing_dim_or_dynamic", "op": "==", "threshold": 0, "estimate": false, "why": "the router inner-joins both tables; a missing row silently removes the edge"},
+    {"id": "G08", "group": "graph", "metric": "named_edges_without_road_feature", "op": "==", "threshold": 0, "estimate": false, "why": "advisory corridors exclude the via road by its gazetteer id"},
+    {"id": "G09", "group": "graph", "metric": "ways_skipped_share", "op": "<=", "threshold": 0.001, "estimate": true, "why": "ways dropped by the vertex/node consistency check"},
+    {"id": "G10", "group": "graph", "metric": "largest_component_share_arterial", "op": ">=", "threshold": 0.99, "estimate": true, "why": "trunk to tertiary roads in a city form one network; the rest is mapping gaps or extract edges"},
+    {"id": "G11", "group": "graph", "metric": "largest_component_share_all", "op": ">=", "threshold": 0.95, "estimate": true, "why": "private campuses and service roads form small islands in OSM"},
+    {"id": "G12", "group": "graph", "metric": "largest_car_scc_share", "op": ">=", "threshold": 0.95, "estimate": true, "why": "share of car-usable length from which a car can reach everything else in the component; reversed one-ways lower it"},
+    {"id": "G13", "group": "graph", "metric": "arterial_dead_end_share", "op": "<=", "threshold": 0.005, "estimate": true, "why": "an arterial ending in nothing, away from the extract border, is a mapping or split error"},
+    {"id": "G14", "group": "graph", "metric": "car_trap_node_share", "op": "<=", "threshold": 0.002, "estimate": true, "why": "nodes a car can enter but not leave (one-way traps), away from the extract border"},
+
+    {"id": "V01", "group": "vehicle", "metric": "edges_car_allowed_2w_not", "op": "==", "threshold": 0, "estimate": false, "why": "a scooter is smaller than a car in every dimension the mask uses"},
+    {"id": "V02", "group": "vehicle", "metric": "edges_hcv_allowed_car_not", "op": "==", "threshold": 0, "estimate": false, "why": "same reasoning, truck vs car"},
+    {"id": "V03", "group": "vehicle", "metric": "edges_motorcycle_no_open_to_2w", "op": "==", "threshold": 0, "estimate": false, "why": "OSM motorcycle=no or private must close the edge to two-wheelers"},
+    {"id": "V04", "group": "vehicle", "metric": "edges_motorcar_no_open_to_car", "op": "==", "threshold": 0, "estimate": false, "why": "OSM motorcar=no or access=no must close the edge to cars"},
+    {"id": "V05", "group": "vehicle", "metric": "edges_hgv_no_open_to_hcv", "op": "==", "threshold": 0, "estimate": false, "why": "OSM hgv=no must close the edge to trucks"},
+    {"id": "V06", "group": "vehicle", "metric": "pairs_2w_time_over_1_15x_car", "op": "==", "threshold": 0, "estimate": true, "why": "a scooter may use every car road; the 70 vs 90 km/h cap allows it to be up to about 15% slower, never more"},
+    {"id": "V07", "group": "vehicle", "metric": "gates_mask_disagrees_with_observation", "op": "==", "threshold": 0, "estimate": false, "why": "with the tape-measured width, who-fits must match who was seen passing"},
+    {"id": "V08", "group": "vehicle", "metric": "gates_car_routed_through_impassable", "op": "==", "threshold": 0, "estimate": false, "why": "a car route must never use a gate a car was seen unable to pass"},
+
+    {"id": "R01", "group": "routing", "metric": "pair_route_found_share", "op": ">=", "threshold": 1.0, "estimate": false, "why": "every known pair, for each vehicle listed, must route"},
+    {"id": "R02", "group": "routing", "metric": "endpoints_snapped_within_150m_share", "op": ">=", "threshold": 0.95, "estimate": true, "why": "a pin far from the road means the road is missing or the wrong vehicle mask was used"},
+    {"id": "R03", "group": "routing", "metric": "pairs_within_15pct_of_osrm_share", "op": ">=", "threshold": 0.85, "estimate": true, "why": "car route length against OSRM on the same OSM file; the speed models differ, the road network does not"},
+    {"id": "R04", "group": "routing", "metric": "pairs_over_50pct_from_osrm", "op": "==", "threshold": 0, "estimate": true, "why": "a 50% gap means a missing road, a wrong one-way or a wrong exclusion, not a speed difference"},
+    {"id": "R05", "group": "routing", "metric": "pairs_via_match_share", "op": ">=", "threshold": 0.70, "estimate": true, "why": "pairs where at least half the roads you named for your usual route appear in DetourAI's route"},
+    {"id": "R06", "group": "routing", "metric": "pairs_time_ratio_in_band_share", "op": ">=", "threshold": 0.80, "estimate": true, "why": "DetourAI time divided by your usual time, inside 0.35 to 1.2: it uses free-flow speeds, so it should be faster than real traffic but not absurdly"},
+    {"id": "R07", "group": "routing", "metric": "pairs_gpx_overlap_share", "op": ">=", "threshold": 0.70, "estimate": true, "why": "pairs with a recorded trip where at least 70% of DetourAI's route lies within 30 m of what you actually drove"},
+
+    {"id": "T01", "group": "gpx", "metric": "points_matched_share", "op": ">=", "threshold": 0.95, "estimate": true, "why": "share of recorded positions within 25 m of a road in the graph; the rest are missing roads, GPS error or parking lots"},
+    {"id": "T02", "group": "gpx", "metric": "car_points_on_car_allowed_share", "op": ">=", "threshold": 0.98, "estimate": true, "why": "where a car actually drove, the graph must allow a car"},
+    {"id": "T03", "group": "gpx", "metric": "2w_points_on_2w_allowed_share", "op": ">=", "threshold": 0.98, "estimate": true, "why": "where a scooter actually rode, the graph must allow a scooter"},
+    {"id": "T04", "group": "gpx", "metric": "car_points_against_oneway_share", "op": "<=", "threshold": 0.01, "estimate": true, "why": "a car driving against a mapped one-way usually means the one-way is wrong in OSM or reversed by the import (scooters are reported, not judged)"},
+
+    {"id": "A01", "group": "advisory", "metric": "parsed_share", "op": ">=", "threshold": 0.85, "estimate": true, "why": "advisories expected to make a zone where the parser found a place name"},
+    {"id": "A02", "group": "advisory", "metric": "anchors_resolved_share", "op": ">=", "threshold": 0.75, "estimate": true, "why": "of parsed ones, every place name matched a gazetteer feature"},
+    {"id": "A03", "group": "advisory", "metric": "placement_rate", "op": ">=", "threshold": 0.70, "estimate": true, "why": "advisories expected to make a zone that produced a non-empty zone"},
+    {"id": "A04", "group": "advisory", "metric": "placed_correct_share", "op": ">=", "threshold": 0.80, "estimate": true, "why": "placed zones covering at least 60% of the stretch you marked, with at most 60% of the zone area farther than 150 m from it"},
+    {"id": "A05", "group": "advisory", "metric": "placed_wrong_place_share", "op": "<=", "threshold": 0.05, "estimate": true, "why": "placed zones covering under 10% of the marked stretch: the costliest error, a closure drawn somewhere else"},
+    {"id": "A06", "group": "advisory", "metric": "false_zone_rate", "op": "<=", "threshold": 0.10, "estimate": true, "why": "advisories you marked as no road action, or as lifted, that still produced a zone"},
+
+    {"id": "L01", "group": "latency", "metric": "route_p50_ms", "op": "<=", "threshold": 500, "estimate": true, "why": "median /v1/route wall time on your pairs, warm"},
+    {"id": "L02", "group": "latency", "metric": "route_p95_ms", "op": "<=", "threshold": 2000, "estimate": true, "why": "95th percentile /v1/route wall time"},
+    {"id": "L03", "group": "latency", "metric": "dijkstra_mean_exec_ms", "op": "<=", "threshold": 1500, "estimate": true, "why": "pg_stat_statements mean execution time of the pgr_bdDijkstra call"},
+
+    {"id": "I01", "group": "idempotency", "metric": "migration_reapply_errors", "op": "==", "threshold": 0, "estimate": false, "why": "every migration re-applied and committed a second time must succeed"},
+    {"id": "I02", "group": "idempotency", "metric": "schema_changed_by_reapply", "op": "==", "threshold": 0, "estimate": false, "why": "re-applying must not change tables, columns, indexes, functions or seed rows"},
+    {"id": "I03", "group": "idempotency", "metric": "network_fingerprint_changed_by_rebuild", "op": "==", "threshold": 0, "estimate": false, "why": "rebuilding from the same OSM tables must give the same edges, masks and lengths"},
+    {"id": "I04", "group": "idempotency", "metric": "gazetteer_changed_by_rebuild", "op": "==", "threshold": 0, "estimate": false, "why": "same features per class and same road links"},
+    {"id": "I05", "group": "idempotency", "metric": "history_rows_lost_by_rebuild", "op": "==", "threshold": 0, "estimate": false, "why": "hand-mapped gates, sinks and submersion alert history must survive a re-import"},
+    {"id": "I06", "group": "idempotency", "metric": "sources_not_polled_after_restart", "op": "==", "threshold": 0, "estimate": false, "why": "after the worker is killed and started, every enabled source is polled again within 120 s"},
+    {"id": "I07", "group": "idempotency", "metric": "duplicates_after_restart", "op": "==", "threshold": 0, "estimate": false, "why": "no message stored twice, no zone made twice from one advisory, no alert sent twice"},
+
+    {"id": "X01", "group": "external", "metric": "review_detourai_preferred_or_same_share", "op": ">=", "threshold": 0.70, "estimate": true, "why": "blind review: share of pairs where the reviewer picked DetourAI's route or said both were fine"},
+    {"id": "X02", "group": "external", "metric": "review_detourai_impassable_flags", "op": "==", "threshold": 0, "estimate": false, "why": "blind review: the reviewer marks a road on DetourAI's route as impossible for that vehicle"}
+  ]
+}

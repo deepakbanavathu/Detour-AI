@@ -5,7 +5,7 @@ graph, and gives each vehicle class a proper re-route: a scooter and a car do no
 detour. Backend-first; commuters get alerts over WhatsApp with a Google Maps handoff, fleets get
 an API/SDK. Design, plan and legal review live in the project doc; this repo is the build.
 
-## What works today (v0.7)
+## What works today (v0.8)
 
 | Piece | Where | Status |
 | --- | --- | --- |
@@ -108,6 +108,12 @@ own GPS, speaks the turns, switches route when the link ends in `#B` (the form a
 alternate by itself when the phone crawls for four minutes ahead of a turn-off. *Start* begins guidance and keeps
 the screen awake. Not yet bundled: an offline basemap for the corridor, so with no data the routes are drawn on a
 plain background.
+
+## Verifying correctness
+
+`verify\verify.bat` checks the stack's output against your own trips, tape-measured gates, labelled police advisories,
+an independent router (OSRM), Osmose and a blind reviewer, and writes a pass/fail report per criterion. Thresholds are
+in `verify/criteria.json`; the full guide, including what to collect and how to read failures, is `verify/VERIFY.md`.
 
 ## Testing
 

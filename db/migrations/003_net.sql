@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS net.edge (
   h3_r9        H3INDEX[] NOT NULL                     -- cells crossed, from ST_Segmentize at 30 m
 );
 CREATE INDEX IF NOT EXISTS edge_geom ON net.edge USING GIST (geom);
-CREATE INDEX IF NOT EXISTS edge_h3   ON net.edge USING GIN (h3_r9);
+CREATE INDEX IF NOT EXISTS edge_h3_gin ON net.edge USING GIN (h3_r9);   -- named apart from the net.edge_h3 table
 CREATE INDEX IF NOT EXISTS edge_src  ON net.edge (src);
 CREATE INDEX IF NOT EXISTS edge_dst  ON net.edge (dst);
 CREATE INDEX IF NOT EXISTS edge_way  ON net.edge (osm_way_id);
@@ -122,8 +122,9 @@ FROM net.edge;
 CREATE OR REPLACE FUNCTION net.parse_width(t TEXT) RETURNS REAL LANGUAGE sql IMMUTABLE AS $$
   SELECT CASE
     WHEN t IS NULL THEN NULL
-    WHEN t ~ '^\s*\d+(\.\d+)?\s*(m)?\s*$' THEN (regexp_match(t, '\d+(\.\d+)?'))[1]::real
-    WHEN t ~ 'ft'                         THEN (regexp_match(t, '\d+(\.\d+)?'))[1]::real * 0.3048
+    -- regexp_match returns capture groups, so the whole number must be the first group
+    WHEN t ~ '^\s*\d+(\.\d+)?\s*(m)?\s*$' THEN (regexp_match(t, '(\d+(?:\.\d+)?)'))[1]::real
+    WHEN t ~ 'ft'                         THEN (regexp_match(t, '(\d+(?:\.\d+)?)'))[1]::real * 0.3048
     ELSE NULL END
 $$;
 

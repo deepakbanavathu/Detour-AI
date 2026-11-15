@@ -94,8 +94,8 @@ FROM (
          CASE WHEN t.oneway_tag = '-1' THEN r.src_node ELSE r.dst_node END AS dst,
          CASE WHEN t.oneway_tag = '-1' THEN ST_Reverse(r.geom) ELSE r.geom END AS g,
          t.hw, t.rank, t.name, t.lanes, t.ffs,
-         (t.oneway_tag IN ('yes','1','true','-1') OR t.junction IN ('roundabout','circular')
-          OR t.hw IN ('motorway','motorway_link')) AS oneway
+         COALESCE(t.oneway_tag IN ('yes','1','true','-1'), false) OR COALESCE(t.junction IN ('roundabout','circular'), false)
+          OR t.hw IN ('motorway','motorway_link') AS oneway
   FROM net.edge_raw r
   JOIN (
     SELECT way_id,

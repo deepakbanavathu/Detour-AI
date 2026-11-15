@@ -1,0 +1,124 @@
+name: verify
+# Runs the same verify.py as verify.bat, on clean machines.
+#  synthetic: a small map with planted faults; the job fails if the verifier misses one or flags a clean check
+#  extract:   a real 8 x 7 km piece of Hyderabad from Geofabrik; the job fails on any criterion that fails
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 21 * * 0"          # Monday 03:00 IST
+  push:
+    branches: [main]
+    paths: ["verify/**", "import/**", "db/**", "api/app/**", ".github/workflows/verify.yml"]
+
+env:
+  DB_PASSWORD: detour
+  ADMIN_TOKEN: ci-admin
+  PGPASSWORD: detour
+  OSRM_IMAGE: ghcr.io/project-osrm/osrm-backend:v5.27.1
+  DB_URL_HOST: postgresql://detour:detour@127.0.0.1:5432/detour
+
+jobs:
+  synthetic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool osm2pgsql postgresql-client
+      - name: Database and migrations
+        run: |
+          docker compose -p detourai up -d --build db
+          for i in $(seq 90); do docker compose -p detourai exec -T db pg_isready -U detour -d detour >/dev/null && break; sleep 2; done
+          docker compose -p detourai exec -T db bash /migrate.sh
+      - name: Import the synthetic map
+        run: |
+          python3 verify/fixtures/make_synthetic_osm.py data/synth.osm
+          osmium cat data/synth.osm -o data/synth.osm.pbf --overwrite
+          BBOX=78.40,17.38,78.47,17.44 WORK=/tmp/detour DATABASE_URL=$DB_URL_HOST bash import/import_osm.sh data/synth.osm.pbf
+          psql -h 127.0.0.1 -U detour -d detour -c "INSERT INTO net.gate (node_id, kind, cut_set) SELECT node_id, 'FIELD', '{}' FROM net.node WHERE barrier = 'gate' LIMIT 1"
+      - name: API and worker
+        run: |
+          docker compose -p detourai up -d --build api worker
+          for i in $(seq 60); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 2; done
+      - name: OSRM on the same file
+        run: |
+          mkdir -p verify/work && cp data/synth.osm.pbf verify/work/city.osm.pbf
+          docker run --rm -v $PWD/verify/work:/data $OSRM_IMAGE osrm-extract -p /opt/car.lua /data/city.osm.pbf
+          docker run --rm -v $PWD/verify/work:/data $OSRM_IMAGE osrm-partition /data/city.osrm
+          docker run --rm -v $PWD/verify/work:/data $OSRM_IMAGE osrm-customize /data/city.osrm
+          docker run -d --name detour-osrm --network detourai_default -v $PWD/verify/work:/data $OSRM_IMAGE osrm-routed --algorithm mld /data/city.osrm
+      - name: Verify, then check the verifier caught every planted fault
+        run: |
+          python3 verify/fixtures/make_synthetic_inputs.py verify/inputs
+          docker build -q -t detourai-verify verify
+          R=/work/verify/reports/ci-synthetic.json
+          V="docker run --rm --network detourai_default -v $PWD:/work -e DATABASE_URL=postgresql://detour:detour@db:5432/detour -e DETOUR_API=http://api:8080 -e OSRM_URL=http://detour-osrm:5000 -e ADMIN_TOKEN=ci-admin -e DETOUR_GIT=${GITHUB_SHA::7} detourai-verify python verify/verify.py"
+          $V run --report $R
+          $V restart-before --report $R
+          sleep 2; docker compose -p detourai kill -s SIGKILL worker; docker compose -p detourai up -d worker
+          $V restart-after --report $R
+          $V finalize --report $R || true
+          python3 verify/fixtures/check_expected.py verify/reports/ci-synthetic.json verify/fixtures/expected.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-synthetic
+          path: verify/reports/ci-synthetic.json
+      - if: failure()
+        run: docker compose -p detourai logs --tail 80
+
+  extract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool osm2pgsql postgresql-client
+      - id: week
+        run: echo "w=$(date +%G-%V)" >> "$GITHUB_OUTPUT"
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: data/ci.osm.pbf
+          key: osm-hyd-ci-${{ steps.week.outputs.w }}
+      - name: Hyderabad extract (Banjara Hills, Jubilee Hills, Madhapur)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p data
+          curl -fL --retry 3 -o /tmp/southern.osm.pbf https://download.geofabrik.de/asia/india/southern-zone-latest.osm.pbf
+          osmium extract --bbox 78.38,17.39,78.46,17.45 --strategy complete_ways /tmp/southern.osm.pbf -o data/ci.osm.pbf --overwrite
+      - name: Database, migrations, import
+        run: |
+          docker compose -p detourai up -d --build db
+          for i in $(seq 90); do docker compose -p detourai exec -T db pg_isready -U detour -d detour >/dev/null && break; sleep 2; done
+          docker compose -p detourai exec -T db bash /migrate.sh
+          BBOX=78.38,17.39,78.46,17.45 WORK=/tmp/detour DATABASE_URL=$DB_URL_HOST bash import/import_osm.sh data/ci.osm.pbf
+      - name: API and worker
+        run: |
+          docker compose -p detourai up -d --build api worker
+          for i in $(seq 60); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 2; done
+      - name: OSRM on the same file
+        run: |
+          mkdir -p verify/work && cp data/ci.osm.pbf verify/work/city.osm.pbf
+          docker run --rm -v $PWD/verify/work:/data $OSRM_IMAGE osrm-extract -p /opt/car.lua /data/city.osm.pbf
+          docker run --rm -v $PWD/verify/work:/data $OSRM_IMAGE osrm-partition /data/city.osrm
+          docker run --rm -v $PWD/verify/work:/data $OSRM_IMAGE osrm-customize /data/city.osrm
+          docker run -d --name detour-osrm --network detourai_default -v $PWD/verify/work:/data $OSRM_IMAGE osrm-routed --algorithm mld /data/city.osrm
+      - name: Verify
+        run: |
+          docker build -q -t detourai-verify verify
+          R=/work/verify/reports/ci-extract.json
+          V="docker run --rm --network detourai_default -v $PWD:/work -e DATABASE_URL=postgresql://detour:detour@db:5432/detour -e DETOUR_API=http://api:8080 -e OSRM_URL=http://detour-osrm:5000 -e ADMIN_TOKEN=ci-admin -e DETOUR_GIT=${GITHUB_SHA::7} detourai-verify python verify/verify.py"
+          $V run --report $R --ci-random-pairs 15
+          $V restart-before --report $R
+          sleep 2; docker compose -p detourai kill -s SIGKILL worker; docker compose -p detourai up -d worker
+          $V restart-after --report $R
+          $V osmose --report $R || true
+          $V finalize --report $R
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-extract
+          path: verify/reports/ci-extract.json
+      - if: failure()
+        run: docker compose -p detourai logs --tail 80

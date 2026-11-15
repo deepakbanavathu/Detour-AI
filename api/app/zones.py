@@ -82,7 +82,10 @@ def _buffer_zone(c, src_ewkt: str, srid: int, buffer_m: float, cut_ewkt: str | N
         """
         SELECT ST_AsEWKT(ST_Transform(z, 4326)) AS geom, ST_AsEWKT(z) AS geom_utm
         FROM (SELECT ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_Difference(
-                ST_Buffer(ST_Transform(ST_GeomFromEWKT(%(src)s), %(srid)s), %(buf)s, 'endcap=flat join=round'),
+                -- a flat end cap on a point buffers to nothing, so points and areas get a round buffer
+                CASE WHEN ST_Dimension(ST_GeomFromEWKT(%(src)s)) = 1
+                     THEN ST_Buffer(ST_Transform(ST_GeomFromEWKT(%(src)s), %(srid)s), %(buf)s, 'endcap=flat join=round')
+                     ELSE ST_Buffer(ST_Transform(ST_GeomFromEWKT(%(src)s), %(srid)s), %(buf)s) END,
                 COALESCE(ST_Buffer(ST_Transform(ST_GeomFromEWKT(%(cut)s), %(srid)s), 25),
                          ST_GeomFromText('POLYGON EMPTY', %(srid)s)))), 3)) AS z) q
         """,
@@ -92,8 +95,19 @@ def _buffer_zone(c, src_ewkt: str, srid: int, buffer_m: float, cut_ewkt: str | N
 
 
 def _h3_cover(c, geom_ewkt: str) -> list[int]:
+    """Every res-9 cell the zone touches. polygon_to_cells alone keeps only cells whose centre is inside, which is
+    nothing at all for a zone smaller than a cell (a 170 m buffer round a junction), so boundary cells are added."""
     row = c.execute(
-        "SELECT array_agg(DISTINCT cell::bigint) AS cells FROM ST_Dump(ST_GeomFromEWKT(%s)) d, h3_polygon_to_cells(d.geom, 9) cell",
+        """
+        WITH z AS (SELECT ST_GeomFromEWKT(%s) AS g),
+        cells AS (
+          SELECT h3_polygon_to_cells(d.geom, 9) AS cell FROM z, ST_Dump(z.g) d
+          UNION
+          SELECT h3_lat_lng_to_cell(p.geom, 9) FROM z, ST_DumpPoints(ST_Segmentize(ST_Boundary(z.g), 0.0005)) p
+          UNION
+          SELECT h3_lat_lng_to_cell(ST_PointOnSurface(z.g), 9) FROM z)
+        SELECT array_agg(DISTINCT cell::bigint) FILTER (WHERE cell IS NOT NULL) AS cells FROM cells
+        """,
         (geom_ewkt,),
     ).fetchone()
     return [int(x) for x in (row["cells"] or [])]

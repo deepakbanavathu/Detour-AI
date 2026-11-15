@@ -5,7 +5,10 @@
 SET work_mem = '512MB';
 
 UPDATE net.edge SET road_gaz_id = NULL WHERE road_gaz_id IS NOT NULL;
-TRUNCATE geo.gazetteer RESTART IDENTITY CASCADE;
+-- DELETE, not TRUNCATE ... CASCADE: net.edge references geo.gazetteer, and a cascading truncate would empty the network.
+TRUNCATE geo.gazetteer_alias;
+DELETE FROM geo.gazetteer;
+ALTER TABLE geo.gazetteer ALTER COLUMN gaz_id RESTART;
 
 -- helper: normalize a name the same way the API normalizer does for ASCII names
 CREATE OR REPLACE FUNCTION geo.norm_name(t TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS $$

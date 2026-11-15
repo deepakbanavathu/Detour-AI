@@ -202,6 +202,11 @@ a phone or an account and are run before a demo or a release.
 | SC-04 | Spoofed handle, look-alike account | not in the allow-list, never ingested | Manual |
 | SC-05 | Secrets | `.env` not in git; keys absent from logs | Manual: `git status`, `docker compose logs` grep |
 
+## Correctness against outside evidence
+
+The suites above test the code against itself. `verify/VERIFY.md` describes the verification against outside
+evidence (your trips and gates, labelled advisories, OSRM, Osmose, a blind reviewer), with 47 numeric criteria.
+
 ## What the automated suites do not cover
 
 Anything that needs the real network or a real device: live X, TomTom and Open-Meteo responses, the Hyderabad import
