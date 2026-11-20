@@ -155,7 +155,7 @@ The report then holds how many zones each app showed at all and the median minut
 **CI on clean machines.** `.github/workflows/verify.yml` runs the same script on GitHub's servers every Monday, on
 pushes that touch the pipeline, and on demand from the Actions tab.
 
-- **synthetic:** a small map with eight planted faults. The job fails if the verifier misses one or flags a clean check.
+- **synthetic:** a small map with four planted data faults, plus guards on the faults fixed in v0.9. The job fails if the verifier misses one or flags a clean check.
 - **extract:** an 8 × 7 km piece of real Hyderabad, from Banjara Hills to Madhapur, with 15 fixed random pairs. The job fails on any failing criterion.
 
 Reports are attached to each run as artifacts.
