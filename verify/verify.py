@@ -222,19 +222,25 @@ def vehicle(c, rep: Report):
     print("\n[vehicle] who may use which edge")
     if not one(c, "SELECT count(*) n FROM net.edge")["n"]:
         return
-    r = one(c, """SELECT count(*) FILTER (WHERE static_mask & 4 > 0 AND static_mask & 1 = 0) car_not_2w,
-                         count(*) FILTER (WHERE static_mask & 32 > 0 AND static_mask & 4 = 0) hcv_not_car FROM net.edge_dim""")
+    # size only: where OSM access rules allow both, a vehicle that fits must not be refused while a bigger one passes
+    has_access = bool(one(c, "SELECT 1 x FROM information_schema.columns WHERE table_schema = 'net' AND table_name = 'edge_dim' AND column_name = 'access_mask'"))
+    acc = (lambda bits: f" AND access_mask & {bits} = {bits}") if has_access else (lambda bits: "")
+    r = one(c, f"""SELECT count(*) FILTER (WHERE static_mask & 4 > 0 AND static_mask & 1 = 0{acc(5)}) car_not_2w,
+                          count(*) FILTER (WHERE static_mask & 32 > 0 AND static_mask & 4 = 0{acc(36)}) hcv_not_car FROM net.edge_dim""")
     rep.check("V01", r["car_not_2w"], "import: net.static_mask rule (a narrower vehicle failing where a wider one passes)")
     rep.check("V02", r["hcv_not_car"], "import: net.static_mask rule")
-    a = one(c, """
-        SELECT count(*) FILTER (WHERE t.tags->>'motorcycle' IN ('no','private') AND d.static_mask & 1 > 0) moto,
-               count(*) FILTER (WHERE COALESCE(t.tags->>'motorcar', t.tags->>'access') IN ('no','private') AND d.static_mask & 4 > 0) car,
-               count(*) FILTER (WHERE t.tags->>'hgv' IN ('no','private') AND d.static_mask & 32 > 0) hgv
-        FROM net.edge e JOIN net.edge_dim d USING (edge_id) JOIN osm.highway t ON t.way_id = e.osm_way_id""")
-    note = "import: net.static_mask ignores OSM access tags; also motor_vehicle and vehicle are not kept by detour.lua, so those restrictions are invisible here"
-    rep.check("V03", a["moto"], note, _access_examples(c, "t.tags->>'motorcycle' IN ('no','private') AND d.static_mask & 1 > 0"))
-    rep.check("V04", a["car"], note, _access_examples(c, "COALESCE(t.tags->>'motorcar', t.tags->>'access') IN ('no','private') AND d.static_mask & 4 > 0"))
-    rep.check("V05", a["hgv"], note, _access_examples(c, "t.tags->>'hgv' IN ('no','private') AND d.static_mask & 32 > 0"))
+    # OSM access, read here independently of the import: the most specific key present decides; only 'no' closes
+    k = lambda *keys: "lower(COALESCE(" + ", ".join(f"NULLIF(btrim(t.tags->>'{x}'), '')" for x in keys) + "))"   # noqa: E731
+    moto, car, hgv = (f"{k('motorcycle', 'motor_vehicle', 'vehicle', 'access')} = 'no' AND d.static_mask & 1 > 0",
+                      f"{k('motorcar', 'motor_vehicle', 'vehicle', 'access')} = 'no' AND d.static_mask & 4 > 0",
+                      f"{k('hgv', 'motor_vehicle', 'vehicle', 'access')} = 'no' AND d.static_mask & 32 > 0")
+    a = one(c, f"""SELECT count(*) FILTER (WHERE {moto}) moto, count(*) FILTER (WHERE {car}) car, count(*) FILTER (WHERE {hgv}) hgv
+                   FROM net.edge e JOIN net.edge_dim d USING (edge_id) JOIN osm.highway t ON t.way_id = e.osm_way_id""")
+    note = ("import: the access tags are not folded into net.edge_dim.static_mask (net.access_mask), or osm.highway lacks the "
+            "vehicle and motor_vehicle keys because the data was imported with an older detour.lua: re-import")
+    rep.check("V03", a["moto"], note, _access_examples(c, moto))
+    rep.check("V04", a["car"], note, _access_examples(c, car))
+    rep.check("V05", a["hgv"], note, _access_examples(c, hgv))
 
 
 def _access_examples(c, where: str) -> list[dict]:
@@ -370,8 +376,19 @@ def pairs(c, rep: Report, ci_random: int = 0):
     found = sum(1 for r in rows if r["status"] == 200)
     rep.check("R01", found / len(rows), "see the failing rows: a 404 'no road open' is the vehicle mask near the pin; 'no path' is connectivity (G10 to G14)",
               [{k: r[k] for k in ("pair", "vehicle", "status", "error")} for r in rows if r["status"] != 200])
-    rep.check("R02", sum(1 for s in snaps if s <= 150) / max(1, len(snaps)), "OSM data: the road at the pin is missing, or import: filtered by highway type",
-              [(r["pair"], r["vehicle"], r.get("snap_from"), r.get("snap_to")) for r in rows if r.get("snap_from", 0) > 150 or r.get("snap_to", 0) > 150])
+    far = []
+    for r in rows:
+        for end, key in (("from", "snap_from"), ("to", "snap_to")):
+            if r.get(key, 0) > 150:
+                p = next(x for x in ps if x["id"] == r["pair"])
+                lat, lng = map(float, p[end].split(","))
+                n = one(c, """SELECT e.name, e.highway, d.static_mask, d.access_mask, ST_Distance(e.geom::geography, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography) dist
+                              FROM net.edge e JOIN net.edge_dim d USING (edge_id) ORDER BY e.geom <-> ST_SetSRID(ST_MakePoint(%s, %s), 4326) LIMIT 1""", (lng, lat, lng, lat))
+                cause = ("OSM data or import: no road at all near the pin" if not n or n["dist"] > 150 else
+                         "vehicle rules: the nearest road is closed to this vehicle by an OSM access tag" if not n["access_mask"] & BITS[r["vehicle"]] else
+                         "vehicle rules: the nearest road is too narrow (or low) for this vehicle; check its width")
+                far.append({"pair": r["pair"], "vehicle": r["vehicle"], "end": end, "snap_m": r[key], "nearest_any_road": n and {"name": n["name"], "dist_m": round(n["dist"])}, "likely_cause": cause})
+    rep.check("R02", sum(1 for s in snaps if s <= 150) / max(1, len(snaps)), "see each pin's likely_cause", far)
 
     # OSRM differential, car only (OSRM has no two-wheeler profile)
     diffs, gaps = [], []
@@ -738,7 +755,9 @@ SELECT md5(string_agg(feature_class || ':' || n, ',' ORDER BY feature_class)) fp
 FROM (SELECT feature_class, count(*) n FROM geo.gazetteer GROUP BY 1) q"""
 
 _HISTORY = """SELECT (SELECT count(*) FROM net.gate) gates, (SELECT count(*) FROM hydro.sink) sinks,
-                     (SELECT count(*) FROM telemetry.hpvse_alert) hpvse"""
+                     (SELECT count(*) FROM telemetry.hpvse_alert) hpvse,
+                     (SELECT count(*) FROM net.gate g CROSS JOIN LATERAL unnest(g.cut_set) c(edge_id)
+                      WHERE NOT EXISTS (SELECT 1 FROM net.edge e WHERE e.edge_id = c.edge_id)) stale_cut_refs"""
 
 
 def _sql_file(path: Path) -> str:
@@ -780,8 +799,8 @@ def idempotency(c, rep: Report, reimport: bool):
     n2, g2, h2 = one(c, _NET_FP), one(c, _GAZ_FP), one(c, _HISTORY)
     rep.check("I03", int(n1 != n2), "import: build_network.sql depends on row order or on state left by the previous run", {"before": n1, "after": n2})
     rep.check("I04", int(g1 != g2), "import: build_gazetteer.sql", {"before": g1, "after": g2})
-    lost = sum(max(0, h1[k] - h2[k]) for k in h1)
-    rep.check("I05", lost, "import: build_network.sql truncates net.* with CASCADE, which empties tables that reference nodes and edges",
+    lost = sum(max(0, h1[k] - h2[k]) for k in ("gates", "sinks", "hpvse")) + h2["stale_cut_refs"]
+    rep.check("I05", lost, "import: build_network.sql dropped rows that reference nodes, or left gate cut sets pointing at old edge ids",
               {"before": h1, "after": h2})
     rep.detail("reimport_seconds", round(time.time() - t0))
 
@@ -899,6 +918,94 @@ def score_review(rep: Report, answers: Path, keyfile: Path):
     rep.check("X02", len(flags), "the reviewer names a road DetourAI used that this vehicle cannot use: check V03, V04, V07 for it", flags)
 
 
+# ------------------------------------------------------------------------------------------------ CIFS feed, lead time
+
+_CIFS_TYPES = {"ROAD_CLOSED", "ACCIDENT", "HAZARD", "POLICE", "CHIT_CHAT", "JAM"}
+
+
+def feed(c, rep: Report):
+    """The Waze-format feed, checked here without using the API's own validator: required fields, limits from the
+    specification, unique ids, and that each line really lies on a road carrying the street name it claims."""
+    print("\n[feed] closure feed in Waze's CIFS format")
+    with http() as h:
+        r = h.get("/v1/feeds/cifs.json")
+    incs = r.json().get("incidents", []) if r.status_code == 200 else None
+    if incs is None:
+        rep.check("F01", 1, f"the feed endpoint answered HTTP {r.status_code}")
+        return
+    if not incs:
+        rep.skip("F01", "the feed is empty: no active zone is sure enough to publish right now")
+        return
+    bad, seen = [], set()
+    for i in incs:
+        p = []
+        for k in ("id", "type", "polyline", "street"):
+            if not str(i.get(k) or "").strip():
+                p.append(f"missing {k}")
+        if i.get("id") in seen:
+            p.append("duplicate id")
+        seen.add(i.get("id"))
+        if i.get("type") not in _CIFS_TYPES:
+            p.append("unknown type")
+        if len(i.get("description") or "") > 40:
+            p.append("description over 40 characters")
+        if i.get("direction") not in ("BOTH_DIRECTIONS", "ONE_DIRECTION"):
+            p.append("no direction")
+        if i.get("type") == "ROAD_CLOSED" and not re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$", i.get("starttime") or ""):
+            p.append("closure without a valid starttime")
+        try:
+            nums = [float(x) for x in (i.get("polyline") or "").split()]
+            pts = [(nums[k + 1], nums[k]) for k in range(0, len(nums) - 1, 2)]           # (lng, lat)
+        except ValueError:
+            pts = []
+        if not pts or len(nums) % 2:
+            p.append("polyline is not lat lon pairs")
+        else:
+            wkt = (f"POINT({pts[0][0]} {pts[0][1]})" if len(pts) == 1 else "LINESTRING(" + ", ".join(f"{x} {y}" for x, y in pts) + ")")
+            m = one(c, """
+                WITH g AS (SELECT ST_SetSRID(ST_GeomFromText(%s), 4326) g),
+                rd AS (SELECT ST_Union(ST_Buffer(e.geom::geography, 20)::geometry) b FROM net.edge e, g WHERE e.name = %s AND e.geom && ST_Expand(g.g, 0.001))
+                SELECT ST_Length(g.g::geography) len,
+                       CASE WHEN ST_Dimension(g.g) = 0 THEN (rd.b IS NOT NULL AND ST_Intersects(g.g, rd.b))::int::float
+                            ELSE COALESCE(ST_Length(ST_Intersection(g.g, rd.b)::geography) / NULLIF(ST_Length(g.g::geography), 0), 0) END on_road
+                FROM g, rd""", (wkt, i.get("street")))
+            if i.get("type") == "ROAD_CLOSED" and (len(pts) < 2 or not 30 <= m["len"] <= 20000):
+                p.append(f"closure line is {m['len']:.0f} m (needs 30 m to 20 km)")
+            if (m["on_road"] or 0) < 0.8:
+                p.append(f"only {100 * (m['on_road'] or 0):.0f}% of the line lies on a road named {i.get('street')!r}")
+        if p:
+            bad.append({"id": i.get("id"), "street": i.get("street"), "problems": p})
+    rep.check("F01", len(bad), "feed builder (api/app/cifs.py): see each incident's problems; an off-road line means the zone's spine does not follow that street", bad)
+    rep.detail("feed", {"incidents": len(incs), "closures": sum(1 for i in incs if i.get("type") == "ROAD_CLOSED"), "streets": sorted({i.get("street") for i in incs})[:20]})
+
+
+def score_lead(rep: Report, sheet: Path):
+    """Your hand-kept sheet: when DetourAI had each zone, and when Waze and Google Maps first showed it."""
+    print("\n[external] lead time against Waze and Google Maps (your sheet)")
+
+    def parse(x):
+        x = (x or "").strip()
+        return datetime.fromisoformat(x) if x else None
+    with sheet.open(newline="", encoding="utf-8-sig") as fh:
+        rows = [r for r in csv.DictReader(fh) if (r.get("zone_id") or "").strip() and not r["zone_id"].startswith("#")]
+    first, leads, shown = 0, [], {"waze": 0, "gmaps": 0}
+    for r in rows:
+        d, w, g = parse(r.get("detour_at")), parse(r.get("waze_at")), parse(r.get("gmaps_at"))
+        if d is None:
+            continue
+        shown["waze"] += w is not None
+        shown["gmaps"] += g is not None
+        others = [x for x in (w, g) if x is not None]
+        if not others or d <= min(others):
+            first += 1
+        if others:
+            leads.append((min(others) - d).total_seconds() / 60)
+    n = len(rows)
+    rep.check("X03", first / n if n else None, "read the rows where an app was earlier: was the closure crowd-visible before the police posted?")
+    rep.d.setdefault("external", {})["lead_time"] = {"zones": n, "shown_by_waze": shown["waze"], "shown_by_google_maps": shown["gmaps"],
+                                                      "median_lead_min": round(statistics.median(leads), 1) if leads else None}
+
+
 # ------------------------------------------------------------------------------------------------ summary
 
 
@@ -928,7 +1035,8 @@ def finalize(rep: Report) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["run", "restart-before", "restart-after", "osmose", "review-pack", "score-review", "finalize"])
+    ap.add_argument("cmd", choices=["run", "restart-before", "restart-after", "feed", "osmose", "review-pack", "score-review", "score-lead", "finalize"])
+    ap.add_argument("--sheet")
     ap.add_argument("--report")
     ap.add_argument("--skip-reimport", action="store_true")
     ap.add_argument("--ci-random-pairs", type=int, default=0)
@@ -958,6 +1066,10 @@ def main() -> int:
             restart_before(c, rep)
         elif a.cmd == "restart-after":
             restart_after(c, rep)
+        elif a.cmd == "feed":
+            feed(c, rep)
+        elif a.cmd == "score-lead":
+            score_lead(rep, Path(a.sheet))
         elif a.cmd == "osmose":
             osmose(c, rep)
         elif a.cmd == "review-pack":

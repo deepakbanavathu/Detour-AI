@@ -1,0 +1,4 @@
+zone_id,what,detour_at,waze_at,gmaps_at,notes
+# one row per zone you watched. Times as 2026-11-20T08:10:00+05:30. Leave waze_at or gmaps_at empty if the app never showed it within an hour.
+# detour_at: the zone's 'created' time in the console. waze_at / gmaps_at: when you first saw the closure or incident on waze.com/live-map and in Google Maps.
+# example (delete it): 41,Waterlogging Tolichowki underpass,2026-11-20T08:10:00+05:30,2026-11-20T08:31:00+05:30,,Maps never showed it

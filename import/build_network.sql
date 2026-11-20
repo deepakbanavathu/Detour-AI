@@ -1,12 +1,20 @@
 -- Builds the dimensional network (Module 2) from osm.highway / osm.point_feature.
--- Re-runnable: it replaces net.* content. Anything referencing net.node/net.edge by FK
--- (net.gate, hydro.sink, telemetry.ping.edge_id is not an FK) is truncated by CASCADE.
+-- Re-runnable. Edges are rebuilt; nodes are kept and updated in place (node_id is the OSM node id), so rows that
+-- reference nodes survive a re-import: hand-mapped gates (net.gate), sinks with their hydrology, and submersion
+-- alert history. Gate cut sets are carried over to the new edge ids through (osm_way_id, seg).
 
 \timing on
 SET work_mem = '512MB';
 SET maintenance_work_mem = '2GB';
 
-TRUNCATE net.edge_dynamic, net.edge_h3, net.edge_dim, net.turn, net.edge, net.node RESTART IDENTITY CASCADE;
+-- remember which OSM way segment each gate's cut-set edge was, before edge ids are reissued
+DROP TABLE IF EXISTS net.gate_cut_old;
+CREATE TABLE net.gate_cut_old AS
+SELECT g.node_id, e.osm_way_id, e.seg
+FROM net.gate g CROSS JOIN LATERAL unnest(g.cut_set) AS c(edge_id) JOIN net.edge e ON e.edge_id = c.edge_id;
+
+-- no CASCADE: these are all the tables that reference net.edge, and nothing outside net.* is emptied
+TRUNCATE net.edge_dynamic, net.edge_h3, net.edge_dim, net.turn, net.edge RESTART IDENTITY;
 
 -- 1. node lists and geometry vertices, per way ------------------------------------------------
 DROP TABLE IF EXISTS osm.way_node;
@@ -70,14 +78,29 @@ GROUP BY way_id, seg
 HAVING count(*) >= 2;
 
 -- 4. nodes ---------------------------------------------------------------------------------------
-INSERT INTO net.node (node_id, geom, h3_r11, barrier, signal)
-SELECT DISTINCT ON (n.node_id) n.node_id, n.geom, h3_lat_lng_to_cell(n.geom, 11),
-       pf.tags->>'barrier', COALESCE(pf.tags->>'highway' = 'traffic_signals', false)
+DROP TABLE IF EXISTS net.node_new;
+CREATE TABLE net.node_new AS
+SELECT DISTINCT ON (n.node_id) n.node_id, n.geom, h3_lat_lng_to_cell(n.geom, 11) AS h3_r11,
+       pf.tags->>'barrier' AS barrier, COALESCE(pf.tags->>'highway' = 'traffic_signals', false) AS signal
 FROM (SELECT src_node AS node_id, ST_StartPoint(geom) AS geom FROM net.edge_raw
       UNION ALL
       SELECT dst_node, ST_EndPoint(geom) FROM net.edge_raw) n
 LEFT JOIN osm.point_feature pf ON pf.node_id = n.node_id
 ORDER BY n.node_id;
+CREATE UNIQUE INDEX ON net.node_new (node_id);
+
+-- nodes gone from OSM are dropped unless something still points at them
+DELETE FROM net.node n
+WHERE NOT EXISTS (SELECT 1 FROM net.node_new w WHERE w.node_id = n.node_id)
+  AND NOT EXISTS (SELECT 1 FROM net.gate x WHERE x.node_id = n.node_id)
+  AND NOT EXISTS (SELECT 1 FROM hydro.sink x WHERE x.node_id = n.node_id)
+  AND NOT EXISTS (SELECT 1 FROM telemetry.hpvse_alert x WHERE x.sink_id = n.node_id);
+
+-- update in place: position and OSM tags change, hydrology columns (elev_m ... underpass) are kept
+INSERT INTO net.node (node_id, geom, h3_r11, barrier, signal)
+SELECT node_id, geom, h3_r11, barrier, signal FROM net.node_new
+ON CONFLICT (node_id) DO UPDATE SET geom = EXCLUDED.geom, h3_r11 = EXCLUDED.h3_r11, barrier = EXCLUDED.barrier, signal = EXCLUDED.signal;
+DROP TABLE net.node_new;
 
 -- 5. edges with attributes ------------------------------------------------------------------------
 INSERT INTO net.edge (osm_way_id, seg, src, dst, geom, length_m, bearing_deg, highway, highway_rank,
@@ -152,9 +175,18 @@ CROSS JOIN LATERAL (
               WHEN e.lanes IS NOT NULL THEN 'LANES_INFER' ELSE 'CLASS_DEFAULT' END AS width_src
 ) w;
 
+UPDATE net.edge_dim d SET access_mask = net.access_mask(t.tags)
+FROM net.edge e JOIN osm.highway t ON t.way_id = e.osm_way_id WHERE d.edge_id = e.edge_id;
+
 UPDATE net.edge_dim d
-SET static_mask = net.static_mask(e.oneway, d.width_m, d.clearance_m, d.max_gvw_t, d.layout_private)
+SET static_mask = net.static_mask(e.oneway, d.width_m, d.clearance_m, d.max_gvw_t, d.layout_private) & d.access_mask
 FROM net.edge e WHERE e.edge_id = d.edge_id;
+
+-- gate cut sets onto the new edge ids
+UPDATE net.gate g SET cut_set = COALESCE((
+  SELECT array_agg(DISTINCT e.edge_id ORDER BY e.edge_id) FROM net.gate_cut_old o JOIN net.edge e USING (osm_way_id, seg)
+  WHERE o.node_id = g.node_id), '{}');
+DROP TABLE net.gate_cut_old;
 
 -- Barrier nodes that are gates/bollards: edges touching them are closed to 4W+ by default (CLOSED_REPORTED)
 -- until a field check says otherwise. Bollards and cycle barriers keep 2W only.

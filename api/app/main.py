@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import brief as briefmod, gazetteer, maps, packs, pipeline, profiles, routing, zones
+from . import brief as briefmod, cifs, gazetteer, maps, packs, pipeline, profiles, routing, zones
 from .channels import chat, fanout, sms, telegram, whatsapp
 from .channels import store as chan_store
 from .config import (ADMIN_TOKEN, CITY_ID, PUBLIC_BASE_URL, SMS_PROVIDER, TELEGRAM_WEBHOOK_SECRET, WHATSAPP_ALERT_TEMPLATE,
@@ -136,6 +136,7 @@ def get_route(
         "bbox_expansions": r.bbox_expansions,
         "via": _via(r.edges),
         "maps_url": maps.maps_url(p.code, dest, pins, origin if include_origin else None),
+        "waze_url": maps.waze_url(dest),
         "waypoints": [{"lat": a, "lng": b} for a, b in pins],
         "geometry": r.geometry,
         "edges": r.edges,
@@ -160,7 +161,7 @@ def compare(
                 "duration_s": round(r.duration_s, 1),
                 "edge_ids": [e["edge_id"] for e in r.edges],
                 "via": _via(r.edges),
-                "maps_url": maps.maps_url(p.code, dest, maps.waypoints(r.edges)),
+                "maps_url": maps.maps_url(p.code, dest, maps.waypoints(r.edges)), "waze_url": maps.waze_url(dest),
                 "geometry": r.geometry,
                 "snap_from": _snap_dict(r.snap_from),
                 "snap_to": _snap_dict(r.snap_to),
@@ -651,3 +652,30 @@ def channels():
         "sms": {"provider": SMS_PROVIDER or None, "configured": sms.configured(), "last_24h": day.get("SMS", {})},
         "links": {"short_links": bool(PUBLIC_BASE_URL), "alerts_sent": opened["sent"], "opened": opened["opened"]},
     }
+
+
+# ---------------------------------------------------------------- CIFS feed (Waze for Cities format)
+
+@app.get("/v1/feeds/cifs.json")
+def cifs_json():
+    """Active, confident zones as closures and incidents. A traffic authority registers this URL in the Waze Partner Hub."""
+    with conn() as c:
+        incidents, _ = cifs.build(c)
+    return {"incidents": incidents}
+
+
+@app.get("/v1/feeds/cifs.xml")
+def cifs_xml():
+    with conn() as c:
+        incidents, _ = cifs.build(c)
+    return Response(cifs.to_xml(incidents), media_type="application/xml")
+
+
+@app.get("/v1/feeds/cifs/preview")
+def cifs_preview():
+    """What the feed holds and what was left out, with the reason, for the console and for checking before a hand-over."""
+    with conn() as c:
+        incidents, skipped = cifs.build(c)
+        zones_active = c.execute("SELECT count(*) AS n FROM geo.zone_of_avoidance WHERE city_id = %s AND status = 'ACTIVE' AND valid_to > now()", (CITY_ID,)).fetchone()["n"]
+    return {"incidents": len(incidents), "closures": sum(1 for i in incidents if i["type"] == "ROAD_CLOSED"), "active_zones": zones_active,
+            "min_confidence": cifs.CIFS_MIN_CONFIDENCE, "skipped": skipped, "sample": incidents[:5]}

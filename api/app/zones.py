@@ -38,6 +38,8 @@ class Zone:
     valid_to: datetime
     anchors: list[Anchor] = field(default_factory=list)
     method: str = ""
+    spine_ewkt: str | None = None      # the line or point the zone was drawn around (what the CIFS feed publishes)
+    origin: str = "ADVISORY"
 
 
 def scope_to_mask(scope: list[str] | None) -> int:
@@ -161,20 +163,24 @@ def resolve_zone(c, ir: dict, ts_published: datetime, source_cred: float, city_i
                                (to.geom_wkt, frm.geom_wkt)).fetchone()["g"]
         corridor = _corridor(c, city_id, _nearest_node(c, frm.geom_wkt), _nearest_node(c, rejoin), via.gaz_id if via else None)
         if corridor:
+            spine = corridor
             geom, geom_utm = _buffer_zone(c, corridor, srid, BUFFER_M[cause], via.geom_wkt if via else None)
             bearing, halfwidth, method = _bearing(c, frm.geom_wkt, rejoin), 45.0, "displaced_corridor"
         else:
+            spine = frm.geom_wkt
             geom, geom_utm = _buffer_zone(c, frm.geom_wkt, srid, CLASS_RADIUS.get(frm.feature_class, 60) + BUFFER_M[cause], None)
             method = "from_anchor_fallback"
     elif a_ is not None and b_ is not None:
         corridor = _corridor(c, city_id, _nearest_node(c, a_.geom_wkt), _nearest_node(c, b_.geom_wkt), None)
         src = corridor or a_.geom_wkt
+        spine = src
         geom, geom_utm = _buffer_zone(c, src, srid, BUFFER_M[cause] + (0 if corridor else CLASS_RADIUS.get(a_.feature_class, 60)), None)
         method = "between_corridor" if corridor else "between_a_fallback"
     else:
         anchor = at or frm or to or (anchors[0] if anchors else None)
         if anchor is None:
             raise Unresolved(ir["anchors"][0]["text"], [])
+        spine = anchor.geom_wkt
         geom, geom_utm = _buffer_zone(c, anchor.geom_wkt, srid, CLASS_RADIUS.get(anchor.feature_class, 60) + BUFFER_M[cause], None)
         method = f"single_{anchor.feature_class.lower()}"
 
@@ -189,7 +195,7 @@ def resolve_zone(c, ir: dict, ts_published: datetime, source_cred: float, city_i
         h3_cover=_h3_cover(c, geom), bearing_center=bearing, bearing_halfwidth=halfwidth,
         profile_mask=scope_to_mask(ir.get("vehicle_scope")), penalty_factor=PENALTY[cause],
         confidence=round(float(ir["confidence"]) * float(source_cred) ** 0.5, 3),
-        valid_from=valid_from, valid_to=valid_to, anchors=anchors, method=method,
+        valid_from=valid_from, valid_to=valid_to, anchors=anchors, method=method, spine_ewkt=spine,
     )
 
 
@@ -234,14 +240,15 @@ def commit_zone(c, z: Zone, ir_id: int | None, city_id: int = CITY_ID, force_sta
         """
         INSERT INTO geo.zone_of_avoidance
           (city_id, ir_id, event_type, cause, geom, geom_utm, h3_cover_r9, bearing_center, bearing_halfwidth,
-           profile_mask, penalty_factor, confidence, status, valid_from, valid_to)
+           profile_mask, penalty_factor, confidence, status, valid_from, valid_to, spine, origin)
         VALUES (%(city)s, %(ir)s, %(et)s, %(cause)s, ST_GeomFromEWKT(%(g)s), ST_GeomFromEWKT(%(gu)s), %(cells)s::h3index[],
-                %(bc)s, %(bh)s, %(mask)s, %(pen)s, %(conf)s, %(status)s, %(vf)s, %(vt)s)
+                %(bc)s, %(bh)s, %(mask)s, %(pen)s, %(conf)s, %(status)s, %(vf)s, %(vt)s, ST_GeomFromEWKT(%(spine)s), %(origin)s)
         RETURNING zone_id
         """,
         {"city": city_id, "ir": ir_id, "et": z.event_type, "cause": z.cause, "g": z.geom_ewkt, "gu": z.geom_utm_ewkt,
          "cells": z.h3_cover, "bc": z.bearing_center, "bh": z.bearing_halfwidth, "mask": z.profile_mask,
-         "pen": z.penalty_factor, "conf": z.confidence, "status": status, "vf": z.valid_from, "vt": z.valid_to},
+         "pen": z.penalty_factor, "conf": z.confidence, "status": status, "vf": z.valid_from, "vt": z.valid_to,
+         "spine": z.spine_ewkt, "origin": z.origin},
     ).fetchone()
     zid = int(row["zone_id"])
     n = 0
@@ -284,7 +291,8 @@ def zone_from_geometry(c, geom_geojson: dict, event_type: str, cause: str, penal
     geom, geom_utm = _buffer_zone(c, src, srid, min(radius, 60) if geom_geojson["type"] == "LineString" else radius, None)
     return Zone(event_type=event_type, cause=cause, geom_ewkt=geom, geom_utm_ewkt=geom_utm, h3_cover=_h3_cover(c, geom),
                 bearing_center=None, bearing_halfwidth=None, profile_mask=127, penalty_factor=penalty,
-                confidence=round(confidence, 3), valid_from=valid_from, valid_to=valid_to, anchors=[], method="source_geometry")
+                confidence=round(confidence, 3), valid_from=valid_from, valid_to=valid_to, anchors=[], method="source_geometry",
+                spine_ewkt=src, origin="FEED")
 
 
 def lift_near(c, anchor: Anchor, radius_m: float = 300.0, city_id: int = CITY_ID) -> list[int]:

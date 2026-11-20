@@ -2,7 +2,8 @@
 
 ALTER TABLE ingest.raw_message DROP CONSTRAINT IF EXISTS raw_message_source_type_check;
 ALTER TABLE ingest.raw_message ADD CONSTRAINT raw_message_source_type_check
-  CHECK (source_type IN ('X','PDF_OCR','RSS','TELEGRAM','FIELD_OFFICER','PASTE','TOMTOM'));
+  -- the full list as of the latest migration, so re-applying this file never narrows it (012 adds CROWD)
+  CHECK (source_type IN ('X','PDF_OCR','RSS','TELEGRAM','FIELD_OFFICER','PASTE','TOMTOM','CROWD'));
 
 CREATE TABLE IF NOT EXISTS ingest.source (
   source_id   INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

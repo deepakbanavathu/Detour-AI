@@ -14,6 +14,7 @@ ZONE_SOFT_MULT = 8.0
 SUBMERGE_MULT = 4.0
 UNKNOWN_GATE_COST_S = 120.0
 FILTER_SPEED_CAP_KMH = 25.0
+NARROW_TWO_WAY_MULT = 1.5      # time multiplier on two-way lanes too narrow to pass an oncoming vehicle of the same size (estimate)
 
 # Optional LLM path for the IR stage: an OpenAI-compatible server (vLLM / llama.cpp) on the home box.
 # Leave LLM_BASE_URL empty to run regex-only.
@@ -42,3 +43,8 @@ MSG91_AUTHKEY = os.environ.get("MSG91_AUTHKEY", "")
 MSG91_TEMPLATE_ID = os.environ.get("MSG91_TEMPLATE_ID", "")
 SMS_FALLBACK_AFTER_S = int(os.environ.get("SMS_FALLBACK_AFTER_S", "60"))
 ALERTS_PER_DAY = int(os.environ.get("ALERTS_PER_DAY", "4"))                  # 2 per window, two windows
+
+# CIFS feed (Waze for Cities format) and crowd reports
+CIFS_MIN_CONFIDENCE = float(os.environ.get("CIFS_MIN_CONFIDENCE", "0.75"))   # only zones at least this sure are published
+REPORTS_PER_DAY = int(os.environ.get("REPORTS_PER_DAY", "5"))
+CHECK_AFTER_MIN = int(os.environ.get("CHECK_AFTER_MIN", "20"))               # "still blocked?" this long after an alert

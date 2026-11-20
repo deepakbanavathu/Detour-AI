@@ -128,6 +128,25 @@ def apply(c, channel: str, raw_id: str, idh: bytes, state: dict, effects: list[d
                 c.execute("UPDATE client.subscriber SET stopped_at = now() WHERE sub_id = %s", (sub,))
                 state["step"] = "HOME"
                 extra[:] = [chat.ask_location("I could not find a road between those two pins for your vehicle. Share the start of your trip again, a little closer to a main road.")]
+        elif do == "report":
+            from . import reports                                   # here to avoid an import cycle with fanout
+            sid = _sub_id(c, channel, idh)
+            if sid is None:
+                extra.append(chat.text("Finish setting up your route first, then you can report."))
+                continue
+            res = reports.create(c, sid, e["kind"], e["lat"], e["lng"])
+            if not res["ok"]:
+                extra.append(chat.text("That pin is not on a road I know. Send REPORT again and share a pin on the road itself." if res["reason"] == "no_road"
+                                       else "You have reached today's limit for reports. Thank you for the ones you sent."))
+            elif res["merged"]:
+                extra.append(chat.text(f"Thanks. That matches a report already on {res['road']}, so it now counts as confirmed."))
+            else:
+                extra.append(chat.text(f"Noted on {res['road']}. Thank you. People whose route passes there will be asked to confirm it."))
+        elif do == "confirm":
+            from . import reports
+            sid = _sub_id(c, channel, idh)
+            if sid is not None:
+                reports.vote(c, e["zone"], sid, e["yes"])
         elif do == "stop":
             c.execute("UPDATE client.subscriber SET stopped_at = now() WHERE channel = %s AND channel_id_hmac = %s", (channel, idh))
         elif do == "resume":

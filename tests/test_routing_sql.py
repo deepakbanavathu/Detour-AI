@@ -45,3 +45,11 @@ def test_bbox_grows_with_factor_and_has_a_floor():
 def test_scope_to_mask():
     assert zones.scope_to_mask(["ALL"]) == 127 and zones.scope_to_mask(None) == 127
     assert zones.scope_to_mask(["HCV", "BUS"]) == 96 and zones.scope_to_mask(["4W"]) == 12 and zones.scope_to_mask(["???"]) == 127
+
+
+def test_narrow_two_way_lanes_cost_more_but_stay_open():
+    two, car = routing._edge_sql(TWO_W, BBOX), routing._edge_sql(CAR, BBOX)
+    # passing room is two of the same vehicle side by side plus 0.4 m: 2.0 m for a scooter, 3.8 m for a car
+    assert "NOT e.oneway AND d.width_m < 2.0 THEN 1.5" in two and "NOT e.oneway AND d.width_m < 3.8 THEN 1.5" in car
+    # it multiplies travel time; the hard exclusions are still only the mask, gates, water and closed zones
+    assert two.count("THEN -1") == car.count("THEN -1")

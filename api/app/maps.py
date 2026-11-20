@@ -64,3 +64,9 @@ def maps_url(profile_code: str, dest: tuple[float, float], pins: list[tuple[floa
     url = "https://www.google.com/maps/dir/?" + urlencode(q)
     assert len(url) < 2048
     return url
+
+
+def waze_url(dest: tuple[float, float]) -> str:
+    """Opens Waze navigating to the destination. Waze takes one destination and no waypoints, so it chooses its own
+    route: offer it as a second button, never as the carrier of DetourAI's detour."""
+    return f"https://waze.com/ul?ll={dest[0]:.5f}%2C{dest[1]:.5f}&navigate=yes&utm_source=detourai"

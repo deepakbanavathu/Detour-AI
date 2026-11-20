@@ -17,8 +17,8 @@ judgement; change one only with a written reason. The rest are exact properties.
 | | G10, G11 | largest connected piece holds ≥ 99% of arterial length and ≥ 95% of all length | estimate |
 | | G12 | a car can get from anywhere to anywhere on ≥ 95% of car-usable length | estimate |
 | | G13, G14 | arterial dead ends ≤ 0.5% and one-way traps ≤ 0.2% of nodes, ignoring 500 m at the extract border | estimate |
-| Vehicles | V01, V02 | no edge open to a car but closed to a scooter; none open to a truck but closed to a car | exact |
-| | V03–V05 | OSM `motorcycle=no`, `motorcar=no` / `access=no`, `hgv=no` close the edge to that vehicle | exact |
+| Vehicles | V01, V02 | where OSM access allows both, no edge open to a car but closed to a scooter, none open to a truck but closed to a car | exact |
+| | V03–V05 | the most specific OSM access key present (for example `motorcycle`, then `motor_vehicle`, `vehicle`, `access`) set to `no` closes the edge to that vehicle; `private` stays open, because gated layouts are handled by the layout rule and the gate cost | exact |
 | | V06 | a scooter is never more than 15% slower than a car on the same pair (the 70 vs 90 km/h cap) | estimate |
 | | V07, V08 | with your tape width, who-fits matches who you saw pass; no car route through a gate a car cannot pass | exact |
 | Routing | R01 | every pair routes for every vehicle you listed | exact |
@@ -38,11 +38,14 @@ judgement; change one only with a written reason. The rest are exact properties.
 | Robustness | I01, I02 | every migration re-applied and committed again succeeds and changes nothing | exact |
 | | I03–I05 | rebuilding the network and gazetteer gives the same fingerprint and keeps hand-mapped gates, sinks and alert history | exact |
 | | I06, I07 | after the worker is killed mid-poll and restarted, every source is polled within 120 s and nothing is duplicated | exact |
+| Feed | F01 | every entry in the Waze-format feed has its required fields, respects the specification's limits, has a unique id, and at least 80% of its line lies on a road with the street name it gives | exact |
+| External | X03 | from your timing sheet, DetourAI had the zone no later than Waze or Google Maps showed it, for ≥ 50% of zones | estimate |
 | External | X01, X02 | blind reviewer picks DetourAI's route or "both fine" for ≥ 70% of trips (estimate); never marks a DetourAI road impassable (exact) | mixed |
 
 `verify/known_issues.json` lists failures already found and understood. They report as `known_issue`, still print in
-the summary, and do not fail the run. Today: V03–V05 (access tags ignored), V07 (scooters barred from narrow two-way
-gaps) and I05 (re-import empties hand-mapped gates and alert history).
+the summary, and do not fail the run. It is empty today: the three found by the first run (access tags ignored,
+scooters barred from narrow two-way gaps, re-import emptying hand-mapped gates and alert history) were fixed in v0.9,
+and their checks now guard the fixes.
 
 ## 2. Inputs you collect
 
@@ -137,6 +140,16 @@ a route per trip, ticks any road a vehicle cannot use, and presses Download answ
 verify\verify.bat score verify\review\<date>\review-answers.csv verify\review\<date>\KEY-do-not-share.json
 ```
 
+**Lead time against Waze and Google Maps.** For about 20 zones over a few days, note in `verify\inputs\lead_time.csv`
+when DetourAI created the zone (the console shows it) and when you first saw the same closure on waze.com/live-map and
+in Google Maps; leave a cell empty if an app never showed it within an hour. Look by hand: nothing reads Waze by script.
+
+```
+verify\verify.bat lead
+```
+
+The report then holds how many zones each app showed at all and the median minutes DetourAI was ahead.
+
 **CI on clean machines.** `.github/workflows/verify.yml` runs the same script on GitHub's servers every Monday, on
 pushes that touch the pipeline, and on demand from the Actions tab.
 
@@ -182,7 +195,8 @@ Tested in a Linux sandbox against real PostgreSQL 16, PostGIS 3.4, pgRouting 3.6
 - `verify.py` end to end: every check, the worker kill and restart, the review pack and its scoring
 - the review page in Chromium
 
-The verifier caught all eight planted faults and passed every clean check.
+The verifier catches the four planted data faults, confirms the three v0.9 fixes, and passes every clean check
+(48 expectations in `verify/fixtures/expected.json`).
 
 Not tested:
 

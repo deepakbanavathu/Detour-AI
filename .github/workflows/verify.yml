@@ -57,6 +57,10 @@ jobs:
           $V restart-before --report $R
           sleep 2; docker compose -p detourai kill -s SIGKILL worker; docker compose -p detourai up -d worker
           $V restart-after --report $R
+          # one confident police closure, so the Waze-format feed has something to publish and be checked
+          curl -fs -X POST http://127.0.0.1:8080/v1/advisories/paste -H "Content-Type: application/json" \
+            -d '{"text":"Traffic restricted between Jubilee Hills Check Post and Madhapur due to VIP movement","source_handle":"@fixture","source_cred":0.95}'
+          $V feed --report $R
           $V finalize --report $R || true
           python3 verify/fixtures/check_expected.py verify/reports/ci-synthetic.json verify/fixtures/expected.json
       - if: always()
@@ -113,6 +117,7 @@ jobs:
           $V restart-before --report $R
           sleep 2; docker compose -p detourai kill -s SIGKILL worker; docker compose -p detourai up -d worker
           $V restart-after --report $R
+          $V feed --report $R
           $V osmose --report $R || true
           $V finalize --report $R
       - if: always()

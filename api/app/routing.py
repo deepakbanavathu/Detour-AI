@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from .config import (
     BBOX_PAD_FRACTION,
     FILTER_SPEED_CAP_KMH,
+    NARROW_TWO_WAY_MULT,
     MIN_PAD_DEG,
     ROUTE_BBOX_RETRIES,
     SUBMERGE_MULT,
@@ -60,6 +61,7 @@ def _edge_sql(p: Profile, bbox: tuple[float, float, float, float], use_zones: bo
               penalize: list[int] | None = None, penalty: float = 1.0) -> str:
     """Edge-cost SQL for pgr_dijkstra. All values interpolated are numbers or SQL literals from the profile table."""
     bit = int(p.bit)
+    passing_w = round(2 * float(p.width_m) + 0.4, 2)     # room for two of this vehicle side by side; narrower two-way lanes are single file
     maxspeed = float(p.max_speed_kmh)
     clearance = float(p.ground_clearance_m)
     can_filter = "true" if p.can_filter else "false"
@@ -86,6 +88,7 @@ def _edge_sql(p: Profile, bbox: tuple[float, float, float, float], use_zones: bo
              ELSE ((e.length_m / (({speed}) / 3.6))
                   * (1 + {ZONE_SOFT_MULT} * CASE WHEN (y.zone_mask & {bit}) > 0 THEN {zone_penalty} ELSE 0 END)
                   * (1 + {SUBMERGE_MULT} * y.p_submerge)
+                  * CASE WHEN NOT e.oneway AND d.width_m < {passing_w} THEN {NARROW_TWO_WAY_MULT} ELSE 1 END
                   + CASE WHEN y.gate_state = 'UNKNOWN' THEN -ln(GREATEST(y.p_open_now, 0.001)) * {UNKNOWN_GATE_COST_S} ELSE 0 END){pen}
         END"""
 

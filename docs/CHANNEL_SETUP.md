@@ -80,6 +80,8 @@ account; check the first send in their dashboard.
   At most four alerts per person in 20 hours, one per zone.
 - When that zone is refuted or expires, the same people get one cleared message.
 - A WhatsApp alert with no delivery receipt after 60 seconds goes out again as an SMS that can be followed on its own.
+- REPORT lets a subscriber pin water, a closed road or an accident; people on that road are asked once to confirm, and
+  people who were alerted are asked once, 20 minutes later, whether it is still blocked.
 - STOP, START, SHOW, RESET, DELETE and HELP work at any point. DELETE removes the subscriber, corridors, alerts and outbox rows.
 
 `/v1/channels` and the console's Feeds tab show what is switched on, subscriber counts, and the last day's delivery.

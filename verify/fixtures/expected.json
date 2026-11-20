@@ -1,14 +1,17 @@
 {
- "_about": "Statuses verify.py must report on the synthetic fixture (verify/fixtures). Each 'fail' is a planted fault; the reason is listed. R03/R04 are left out: they depend on OSRM's own handling of the gate and are not fixed by the fixture.",
+ "_about": "Statuses verify.py must report on the synthetic fixture. 'planted' faults must fail; 'guards' are former failures that must now pass. R03/R04 are left out: they depend on OSRM's own handling of the gate.",
  "planted": {
   "G05": "two OSM ways drawn over one road (Tolichowki Underpass on Road No 44)",
-  "V03": "Expressway Spur carries motorcycle=no",
-  "V07": "1.5 m two-way gate lane a scooter passes",
-  "T03": "scooter trip through the gate lane",
   "T04": "car trip westward on 'Oneway East'",
-  "R07": "the scooter route cannot follow the trip through the gate (consequence of V07)",
-  "A04": "a3: no arterial detour exists, so the zone falls back to a buffer round one junction",
-  "I05": "a hand-mapped gate planted in net.gate before the rebuild"
+  "R07": "the scooter trip goes through a gate whose open state is unknown; the route avoids it because of the gate cost",
+  "A04": "a3: no arterial detour exists, so the zone falls back to a buffer round one junction"
+ },
+ "guards": {
+  "V03": "Expressway Spur carries motorcycle=no: must stay closed to two-wheelers (fixed in v0.9)",
+  "V07": "1.5 m two-way gate lane: a scooter fits, a car does not (fixed in v0.9)",
+  "T03": "scooter trip through the gate lane is on a 2W-allowed edge (fixed in v0.9)",
+  "I05": "a hand-mapped gate with a cut set, a sink and an alert survive the rebuild (fixed in v0.9)",
+  "F01": "the Waze-format feed for one police closure is valid and lies on the named roads"
  },
  "expected": {
   "A01": "pass",
@@ -17,6 +20,7 @@
   "A04": "fail",
   "A05": "pass",
   "A06": "pass",
+  "F01": "pass",
   "G01": "pass",
   "G02": "pass",
   "G03": "pass",
@@ -35,7 +39,7 @@
   "I02": "pass",
   "I03": "pass",
   "I04": "pass",
-  "I05": "fail",
+  "I05": "pass",
   "I06": "pass",
   "I07": "pass",
   "L01": "pass",
@@ -48,15 +52,15 @@
   "R07": "fail",
   "T01": "pass",
   "T02": "pass",
-  "T03": "fail",
+  "T03": "pass",
   "T04": "fail",
   "V01": "pass",
   "V02": "pass",
-  "V03": "fail",
+  "V03": "pass",
   "V04": "pass",
   "V05": "pass",
   "V06": "pass",
-  "V07": "fail",
+  "V07": "pass",
   "V08": "pass"
  }
 }

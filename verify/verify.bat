@@ -4,6 +4,7 @@ rem   verify.bat                     full run: graph, vehicles, routes, OSRM, GP
 rem   verify.bat --skip-reimport     same, without rebuilding the network (saves 10 to 20 minutes on the full city)
 rem   verify.bat review              build a blind review pack (verify\review\<date>\review.html)
 rem   verify.bat score ANSWERS KEY   score the reviewer's CSV against the key, into the last report
+rem   verify.bat lead                 score verify\inputs\lead_time.csv (your Waze / Google Maps timing sheet) into the last report
 rem Exit code: 0 all passed or known issues only, 1 a criterion failed, 2 a step or the script failed.
 setlocal EnableExtensions
 cd /d "%~dp0\.."
@@ -22,7 +23,7 @@ for /f %%G in ('git rev-parse --short HEAD 2^>nul') do set "GIT=%%G"
 if not exist verify\inputs\gpx mkdir verify\inputs\gpx
 if not exist verify\work mkdir verify\work
 if not exist verify\reports mkdir verify\reports
-for %%F in (pairs.csv gates.csv advisories.geojson) do if not exist "verify\inputs\%%F" copy /y "verify\templates\%%F" "verify\inputs\%%F" >nul
+for %%F in (pairs.csv gates.csv advisories.geojson lead_time.csv) do if not exist "verify\inputs\%%F" copy /y "verify\templates\%%F" "verify\inputs\%%F" >nul
 
 set "RUNV=docker run --rm --network %NET% -v "%cd%":/work -e DATABASE_URL=postgresql://detour:%DB_PASSWORD%@db:5432/detour -e DETOUR_API=http://api:8080 -e OSRM_URL=http://detour-osrm:5000 -e ADMIN_TOKEN=%ADMIN_TOKEN% -e DETOUR_GIT=%GIT% detourai-verify python verify/verify.py"
 
@@ -31,6 +32,7 @@ docker build -q -t detourai-verify verify >nul || goto :fail
 
 if /i "%~1"=="review" goto :review
 if /i "%~1"=="score" goto :score
+if /i "%~1"=="lead" goto :lead
 
 echo == 1/7 stack up (the database restarts once to load pg_stat_statements)
 docker compose -p %PROJECT% up -d --build || goto :fail
@@ -49,6 +51,9 @@ timeout /t 2 /nobreak >nul
 docker compose -p %PROJECT% kill -s SIGKILL worker >nul
 docker compose -p %PROJECT% up -d worker >nul || goto :fail
 %RUNV% restart-after --report %REPORT% || goto :fail
+
+echo == closure feed check
+%RUNV% feed --report %REPORT%
 
 echo == 5/7 Osmose issues for the area (needs internet; a failure here does not stop the run)
 %RUNV% osmose --report %REPORT%
@@ -72,6 +77,12 @@ set "ANS=%~2"
 set "KEY=%~3"
 set /p REPORT=<verify\work\current_report.txt
 %RUNV% score-review --report %REPORT% --answers /work/%ANS:\=/% --key /work/%KEY:\=/% || goto :fail
+%RUNV% finalize --report %REPORT%
+exit /b %errorlevel%
+
+:lead
+set /p REPORT=<verify\work\current_report.txt
+%RUNV% score-lead --report %REPORT% --sheet /work/verify/inputs/lead_time.csv || goto :fail
 %RUNV% finalize --report %REPORT%
 exit /b %errorlevel%
 

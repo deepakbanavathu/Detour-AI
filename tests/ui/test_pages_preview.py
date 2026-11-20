@@ -257,9 +257,31 @@ def test_feeds_tab_shows_outgoing_channels_with_next_step(open_page):
     p.wait_for_selector(".plate")
     p.click("#t-feeds")
     p.wait_for_selector("#channels .road")
-    assert p.locator("#channels .road").count() == 3
-    assert p.locator("#channels .pill").all_inner_texts() == ["No template yet", "Working", "Recording only"]
+    assert p.locator("#channels .road:not(#cifs)").count() == 3
+    assert p.locator("#channels .road:not(#cifs) .pill").all_inner_texts() == ["No template yet", "Working", "Recording only"]
     text = p.inner_text("#channels")
     assert "212 subscribers, 9 stopped" in text and "148 delivered, 97 read" in text
     assert "set WHATSAPP_ALERT_TEMPLATE and PUBLIC_BASE_URL" in text and "SMS_PROVIDER=msg91" in text
     assert "131 of 245 alerts in the last 24 hours were opened in Google Maps" in text
+
+
+def test_console_offers_waze_beside_google_maps(open_page):
+    p = open_page("console.html")
+    p.wait_for_selector(".plate")
+    links = p.locator('#plates a:has-text("Open in Waze")')
+    assert links.count() == 2
+    href = links.first.get_attribute("href")
+    assert href.startswith("https://waze.com/ul?ll=") and "navigate=yes" in href
+    assert "destination only" in links.first.get_attribute("title")
+
+
+def test_feeds_tab_shows_the_closure_feed_and_what_was_left_out(open_page):
+    p = open_page("console.html")
+    p.wait_for_selector(".plate")
+    p.click("#t-feeds")
+    p.wait_for_selector("#cifs .pill")
+    text = p.inner_text("#cifs")
+    assert "Closure feed for Waze and Google Maps" in text and p.inner_text("#cifs .pill") == "Publishing"
+    assert "7 entries from 9 active zones, 3 of them full closures" in text
+    assert "2 left out: zone 14, no named road within 80 m of the zone" in text
+    assert "/v1/feeds/cifs.json" in text and "75% sure" in text

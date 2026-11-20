@@ -17,7 +17,8 @@ NOTICE = (
     "It does not track where you are.\n\n"
     "Reply STOP to end, DELETE to erase everything, SHOW to see what is kept. You must be 18 or older.\n\n"
     "Set up alerts from DetourAI on this chat?")
-HELP = "Send SHOW to see what is kept, STOP to pause alerts, START to resume, RESET to change your route, DELETE to erase everything."
+HELP = ("Send REPORT to pin water, a closed road or an accident for others. SHOW shows what is kept, STOP pauses alerts, "
+        "START resumes, RESET changes your route, DELETE erases everything.")
 
 
 def text(t: str) -> dict:
@@ -38,6 +39,8 @@ ASK_HOME = ask_location("Where does your trip usually start? Share that place as
 ASK_WORK = ask_location("And where does it end? Share that place as a location pin.")
 ASK_WINDOWS = buttons("When do you travel?", [("win_both", "Morning and evening"), ("win_am", "Morning only"), ("win_pm", "Evening only")])
 ASK_CONSENT = buttons(NOTICE, [("consent_yes", "Yes, send alerts"), ("consent_no", "No thanks")])
+ASK_REPORT_KIND = buttons("What do you want to report? Send CANCEL to go back.", [("rep_water", "Water on road"), ("rep_closed", "Road closed"), ("rep_accident", "Accident")])
+ASK_REPORT_PIN = ask_location("Share the exact spot as a location pin, once you are stopped safely. Send CANCEL to go back.")
 
 
 def _dist_m(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -69,6 +72,46 @@ def describe(data: dict, since: str | None = None) -> str:
 def step(state: dict | None, msg: dict) -> tuple[dict, list[dict], list[dict]]:
     s = {"step": "NEW", "data": {}} if not state else {"step": state["step"], "data": dict(state.get("data") or {})}
     w = _word(msg) if msg["kind"] == "text" else ""
+
+    # ---- an answer to "still blocked?" can arrive at any point and never changes where the conversation is
+    if msg["kind"] == "button" and (msg.get("id") or "").startswith("zc_"):
+        _, yn, zid = (msg["id"].split("_") + ["", ""])[:3]
+        if yn in ("y", "n") and zid.isdigit():
+            return s, [text("Thanks. That keeps the map right for everyone on that road.")], [{"do": "confirm", "zone": int(zid), "yes": yn == "y"}]
+        return s, [], []
+
+    # ---- reporting: two steps, then back to where the person was
+    if s["step"] in ("REPORT_KIND", "REPORT_PIN"):
+        back = (s["data"].get("report") or {}).get("back", "DONE")
+        if w in ("CANCEL", "BACK", "NO"):
+            s["data"].pop("report", None)
+            s["step"] = back
+            return s, [text("Nothing was reported.")], []
+        if s["step"] == "REPORT_KIND":
+            kind = _pick(msg, {"rep_water": "WATER", "rep_closed": "CLOSED", "rep_accident": "ACCIDENT"},
+                         {"WATER": "WATER", "FLOOD": "WATER", "CLOSED": "CLOSED", "BLOCK": "CLOSED", "ACCIDENT": "ACCIDENT", "CRASH": "ACCIDENT"})
+            if kind is None and w not in ("STOP", "UNSUBSCRIBE", "DELETE"):
+                return s, [ASK_REPORT_KIND], []
+            if kind:
+                s["data"]["report"]["kind"] = kind
+                s["step"] = "REPORT_PIN"
+                return s, [ASK_REPORT_PIN], []
+        elif msg["kind"] == "location":
+            kind = s["data"]["report"]["kind"]
+            s["data"].pop("report", None)
+            s["step"] = back
+            return s, [], [{"do": "report", "kind": kind, "lat": msg["lat"], "lng": msg["lng"]}]      # the store writes the reply
+        elif w not in ("STOP", "UNSUBSCRIBE", "DELETE"):
+            return s, [ASK_REPORT_PIN], []
+        s["data"].pop("report", None)                           # STOP or DELETE in the middle of a report: fall through
+        s["step"] = back
+    if w == "REPORT":
+        if s["step"] != "DONE":
+            return s, [text("Finish setting up your route first, then you can report. " + ("Send START to turn alerts back on." if s["step"] == "STOPPED" else "Say hi to begin."
+                                                                                              if s["step"] in ("NEW", "CONSENT") else "You are a few answers away."))], []
+        s["data"]["report"] = {"back": "DONE"}
+        s["step"] = "REPORT_KIND"
+        return s, [ASK_REPORT_KIND], []
 
     # ---- commands that work at any point
     if w in ("STOP", "UNSUBSCRIBE", "CANCEL"):

@@ -5,7 +5,7 @@ graph, and gives each vehicle class a proper re-route: a scooter and a car do no
 detour. Backend-first; commuters get alerts over WhatsApp with a Google Maps handoff, fleets get
 an API/SDK. Design, plan and legal review live in the project doc; this repo is the build.
 
-## What works today (v0.8)
+## What works today (v0.10)
 
 | Piece | Where | Status |
 | --- | --- | --- |
@@ -95,6 +95,19 @@ message when it ends. A WhatsApp alert with no delivery receipt after 60 seconds
 Setup, including the two template texts to submit to Meta, is in `docs/CHANNEL_SETUP.md`. With nothing configured
 the code runs and sends nothing; the console's Feeds tab shows each channel's state and its next step.
 
+## Crowd reports and the Waze-format feed
+
+- **REPORT** on WhatsApp or Telegram: pick water, closed road or accident, share the pin. It becomes a small zone on
+  that road, live for 45 minutes (accident) to 3 hours (closure) unless confirmed.
+- **Still blocked?** People alerted about a zone are asked once, 20 minutes later; a few people whose route passes an
+  unconfirmed report are asked too. Answers are weighted by each person's trust. About one average person confirms a
+  report; about two more saying "clear" remove a crowd report, and shorten (never remove) a police closure.
+- **Trust** per reporter rises when their reports are confirmed and falls when refuted; it sets how sure their next
+  report starts.
+- **Closure feed** at `/v1/feeds/cifs.json` and `.xml`, in Waze's CIFS format, for a traffic authority to register
+  under Waze for Cities so the closures reach Waze and Google Maps. See `docs/WAZE_FEED.md`.
+- **Open in Waze** beside the Google Maps link. Waze takes the destination only and picks its own route.
+
 ## Route packs and the offline card
 
 ![Route card](docs/card.png)
@@ -119,10 +132,10 @@ in `verify/criteria.json`; the full guide, including what to collect and how to 
 
 | Command | What it runs |
 | --- | --- |
-| `make test` | 96 unit tests: advisory parser, normalization, Maps handoff, brief, packs, routing SQL, feed parsers, onboarding conversation, channel adapters |
+| `make test` | 133 unit tests: advisory parser, normalization, Maps and Waze handoff, brief, packs, routing SQL, feed parsers, onboarding and report conversation, channel adapters, CIFS feed, trust and votes |
 | `make test-sql` | every SQL file and embedded statement through PostgreSQL's parser |
-| `make test-ui` | 23 browser tests of the console (routes, advisories, review, roads, feeds), brief and route card on preview data |
-| `make test-live` | 15 end-to-end tests against the running stack (skipped when it is down) |
+| `make test-ui` | 25 browser tests of the console (routes, advisories, review, roads, feeds), brief and route card on preview data |
+| `make test-live` | 16 end-to-end tests against the running stack (skipped when it is down) |
 
 `pip install -r requirements-dev.txt` and `python -m playwright install chromium` set up the tools. GitHub Actions
 runs the first three on every push (`.github/workflows/tests.yml`). The scenario catalogue, with manual checks for
@@ -159,6 +172,17 @@ re-runs the sentence; `{"action":"dismiss"}` drops it. This is the 20-minutes-a-
 C to B is shut; D and E are the way round. The zone covers C to B only.
 
 **Tests.** `make test` runs the parser tests (RSS, X, TomTom, Open-Meteo, advisory sentences) with no network or database.
+
+## Vehicle rules
+
+- **Fit** is single file: a vehicle may use a lane at least its own width plus 0.4 m, one-way or two-way. On a two-way
+  lane narrower than two of that vehicle side by side plus 0.4 m, travel time is multiplied by 1.5 (`NARROW_TWO_WAY_MULT`),
+  because oncoming traffic has to wait. A 1.5 m gate gap is open to scooters and closed to cars.
+- **OSM access tags** close an edge per vehicle: the most specific key present decides (`motorcycle` for two-wheelers,
+  `motorcar` for cars, `goods` for light trucks, `hgv` for trucks, `bus`/`psv` for buses, then `motor_vehicle`,
+  `vehicle`, `access`). Only `no` closes; `private` gated layouts follow the layout rule and the gate cost.
+- **Re-imports** keep nodes in place, so hand-mapped gates (with their cut sets), sinks with their hydrology, and
+  submersion alert history survive.
 
 ## Fine-tuning knobs
 

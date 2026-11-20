@@ -41,7 +41,7 @@ def main(out: Path):
         ("s01", "Road No 1 west", g(0, 0), "Road No 1 east", g(0, 5), "both", "2", "Road No 1 Banjara Hills", "s01_car.gpx"),
         ("s02", "SW corner", g(0, 0), "NE corner", g(5, 5), "car", "5", "Road No 36", ""),
         ("s03", "Gate west", g(1, 1), "Gate east", g(2, 2), "both", "1.5", "", "s03_2w.gpx"),
-        ("s04", "Spur start", g(0, 4), "Spur end", (LAT0 - DLAT, LNG0 + 5 * DLNG), "both", "1", "Expressway Spur", ""),
+        ("s04", "Spur start", g(0, 4), "Spur end", (LAT0 - DLAT, LNG0 + 5 * DLNG), "car", "1", "Expressway Spur", ""),
     ]
     with (out / "pairs.csv").open("w") as f:
         f.write("id,from_label,from_lat,from_lng,to_label,to_lat,to_lng,vehicle,usual_minutes,usual_via,gpx\n")

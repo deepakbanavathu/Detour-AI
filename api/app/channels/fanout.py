@@ -61,9 +61,13 @@ def _way_round(profile: str, o: tuple[float, float], d: tuple[float, float]) -> 
     return sorted(names, key=names.get, reverse=True)[:3], extra or None, maps.maps_url(code, d, maps.waypoints(cur.edges))
 
 
-def _send(channel: str, chan_id: str, body: str, link: str, token: str, params: list[str], inside_window: bool) -> tuple[str | None, str | None]:
+def _send(channel: str, chan_id: str, body: str, link: str, token: str, params: list[str], inside_window: bool,
+          waze: str | None = None) -> tuple[str | None, str | None]:
     if channel == "TELEGRAM":
-        return telegram.send(telegram.link_message(chan_id, body, "Open in Google Maps", link))
+        msg = telegram.link_message(chan_id, body, "Open in Google Maps", link)
+        if waze:
+            msg["reply_markup"]["inline_keyboard"].append([{"text": "Open in Waze", "url": waze}])
+        return telegram.send(msg)
     if inside_window:
         return whatsapp.send(whatsapp.link_message(chan_id, body, "Open in Google Maps", link))
     if WHATSAPP_ALERT_TEMPLATE and PUBLIC_BASE_URL:
@@ -86,7 +90,8 @@ def fan_out_zone(c, zone_id: int, now: datetime | None = None) -> dict:
         trip = alerts.trip_label(r["label"])
         body = alerts.alert_text(z["cause"], where, until, via, trip, extra)
         inside = bool(r["last_inbound_at"]) and now - r["last_inbound_at"] < WINDOW_24H
-        msg_id, err = _send(r["channel"], r["chan_id"], body, link, token, alerts.template_params(z["cause"], where, until, via, trip), inside)
+        msg_id, err = _send(r["channel"], r["chan_id"], body, link, token, alerts.template_params(z["cause"], where, until, via, trip), inside,
+                            maps.waze_url(_latlng(r["d"])))
         status = "SENT" if msg_id else ("NOT_SENT" if err and ("not configured" in err or "no approved template" in err) else "FAILED")
         due = now + timedelta(seconds=SMS_FALLBACK_AFTER_S) if status == "SENT" and r["channel"] == "WHATSAPP" and sms.configured() else None
         c.execute(
@@ -171,7 +176,7 @@ def update_status(c, provider_msg_id: str, status: str, error: str | None) -> No
 
 def tick(c) -> dict:
     """Called by the worker every loop: new zones out, cleared notices, SMS fallbacks."""
-    res = {"zones": 0, "sent": 0, "cleared": 0, "sms": 0}
+    res = {"zones": 0, "sent": 0, "cleared": 0, "sms": 0, "asked": 0, "settled": 0}
     for z in c.execute("SELECT zone_id FROM geo.zone_of_avoidance WHERE city_id = %s AND status = 'ACTIVE' AND fanned_out_at IS NULL AND valid_to > now() ORDER BY zone_id LIMIT 5", (CITY_ID,)).fetchall():
         r = fan_out_zone(c, z["zone_id"])
         res["zones"] += 1
@@ -182,4 +187,6 @@ def tick(c) -> dict:
         res["cleared"] += send_cleared(c, z["zone_id"])
     if sms.configured():
         res["sms"] = sms_fallbacks(c)
+    from . import reports                                           # reports imports this module's siblings
+    res.update(reports.tick(c))
     return res

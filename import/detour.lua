@@ -45,6 +45,7 @@ local keep = {
     maxweight = true, oneway = true, surface = true, access = true, motorcycle = true, motorcar = true,
     hgv = true, tunnel = true, bridge = true, layer = true, service = true, junction = true, lit = true,
     traffic_calming = true, maxspeed = true, ['lanes:forward'] = true, ['lanes:backward'] = true, ref = true,
+    vehicle = true, motor_vehicle = true, goods = true, psv = true, bus = true,
 }
 
 local highway_ok = {

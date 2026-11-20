@@ -2,7 +2,7 @@
 import math
 from urllib.parse import parse_qs, urlparse
 
-from app.maps import maps_url, waypoints
+from app.maps import maps_url, waypoints, waze_url
 
 
 def edges(spec):
@@ -35,3 +35,9 @@ def test_url_contract():
 
 def test_url_stays_under_the_length_limit():
     assert len(maps_url("LCV", (17.4, 78.4), [(17.41, 78.41), (17.42, 78.42), (17.43, 78.43)], (17.3, 78.3))) < 2048
+
+
+def test_waze_link_is_destination_only():
+    u = waze_url((17.4126, 78.4480))
+    assert u == "https://waze.com/ul?ll=17.41260%2C78.44800&navigate=yes&utm_source=detourai"
+    assert "waypoint" not in u

@@ -158,6 +158,18 @@ def test_channel_status_shape(api):
     assert isinstance(d["links"]["alerts_sent"], int)
 
 
+def test_cifs_feed_is_well_formed_json_and_xml(api):
+    j = api.get("/v1/feeds/cifs.json").json()
+    assert list(j) == ["incidents"] and isinstance(j["incidents"], list)
+    for i in j["incidents"]:
+        assert {"id", "type", "polyline", "street", "direction"} <= set(i) and len(i.get("description", "")) <= 40
+    x = api.get("/v1/feeds/cifs.xml")
+    assert x.headers["content-type"].startswith("application/xml") and x.text.lstrip().startswith("<?xml") and "<incidents" in x.text
+    pv = api.get("/v1/feeds/cifs/preview").json()
+    assert pv["incidents"] == len(j["incidents"]) and isinstance(pv["skipped"], list)
+    assert api.get("/v1/route", params={"profile": "2W", "from": A, "to": B}).json()["waze_url"].startswith("https://waze.com/ul?ll=")
+
+
 def test_pages_are_served(api):
     for path in ("/console", "/brief", "/card/1", "/sw.js"):
         r = api.get(path)

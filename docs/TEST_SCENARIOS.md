@@ -6,10 +6,10 @@ a phone or an account and are run before a demo or a release.
 
 | Suite | Command | Needs | Count |
 | --- | --- | --- | --- |
-| Unit | `make test` | Python only | 96 |
-| SQL parse | `make test-sql` | Python only | 243 statements |
-| Browser (preview data) | `make test-ui` | Playwright + Chromium | 23 |
-| Live end to end | `make test-live` | running stack with Hyderabad imported | 15 |
+| Unit | `make test` | Python only | 133 |
+| SQL parse | `make test-sql` | Python only | 298 statements |
+| Browser (preview data) | `make test-ui` | Playwright + Chromium | 25 |
+| Live end to end | `make test-live` | running stack with Hyderabad imported | 16 |
 
 ## 1. Advisory parsing (text to IR)
 
@@ -192,7 +192,28 @@ a phone or an account and are run before a demo or a release.
 | CH-30 | Meta redelivers a webhook | processed once | Manual: replay the same payload |
 | CH-31 | DELETE on a live subscriber | subscriber, corridors, alerts and outbox rows gone | Manual: check the tables |
 
-## 12. Security and access
+## 12. Crowd reports, confirmation, trust and the Waze-format feed
+
+| Id | Scenario | Expected | Runs |
+| --- | --- | --- | --- |
+| CR-01 | REPORT, pick a kind, share a pin | back to where the person was; one report effect | Auto `test_reports.py::test_report_flow_kind_then_pin_then_back` |
+| CR-02 | Typed kinds; noise re-asks; CANCEL goes back without unsubscribing; STOP and DELETE still work mid-report | as stated | Auto `test_report_accepts_typed_kinds_and_re_asks_on_noise`, `test_cancel_inside_a_report...`, `test_stop_and_delete_work_in_the_middle_of_a_report` |
+| CR-03 | REPORT before setup is finished | refused with the reason | Auto `test_report_needs_a_finished_setup` (4 cases) |
+| CR-04 | "Still blocked?" answers at any step; malformed buttons | confirm effect, conversation untouched; nothing | Auto `test_still_blocked_answers_work_anywhere...` (4 cases), `test_malformed_check_buttons_do_nothing` |
+| CR-05 | Starting confidence and trust changes | new reporter starts a candidate, proven one starts active; bounded steps | Auto `test_a_new_reporter_starts_a_candidate...`, `test_trust_moves_with_outcomes_inside_bounds` |
+| CR-06 | What summed answers do | one average yes activates; two net no remove a crowd report, shorten a police closure | Auto `test_vote_effect` (8 cases) |
+| CR-07 | Lifetimes and question wording | 45 / 120 / 180 minutes; button titles within limits | Auto `test_report_kinds_have_short_lives_and_fit_buttons` |
+| CR-08 | Pin off any road; sixth report in a day; second report at the same spot | refused; refused; counts as confirmation | Manual on the stack (done once in the build sandbox) |
+| CF-01 | Closure, hazard and accident mapping; every subtype allowed by the spec | as stated | Auto `test_cifs.py::test_only_a_full_closure_with_a_line_becomes_road_closed`, `test_every_mapped_subtype_is_one_the_spec_allows` |
+| CF-02 | Polyline order, direction, times, description length | lat lon, affected direction, +05:30, under 40 characters | Auto `test_polyline_is_lat_lon_with_six_decimals`, `test_orient_follows_the_affected_direction`, `test_times_are_iso_with_the_india_offset`, `test_descriptions_fit_wazes_forty_characters` |
+| CF-03 | Validation | twelve ways an entry can be wrong are each caught | Auto `test_validation_catches_what_waze_would_reject` |
+| CF-04 | XML output | escaped, id as attribute | Auto `test_xml_escapes_and_keeps_the_id_as_an_attribute` |
+| CF-05 | Feed endpoints | JSON has only `incidents`; XML served; preview counts match; Waze link in routes | Auto live `test_cifs_feed_is_well_formed_json_and_xml` |
+| CF-06 | Each feed line lies on a road with the street name it gives | 0 invalid | Auto verifier criterion F01 |
+| CF-07 | Console shows the feed and what was left out; Waze link beside Maps | as stated | Auto UI `test_feeds_tab_shows_the_closure_feed...`, `test_console_offers_waze_beside_google_maps` |
+| CF-08 | Feed submitted to Waze by an authority | accepted; closures appear in Waze and Google Maps | Manual, needs a Waze for Cities partner |
+
+## 13. Security and access
 
 | Id | Scenario | Expected | Runs |
 | --- | --- | --- | --- |
