@@ -39,6 +39,8 @@ judgement; change one only with a written reason. The rest are exact properties.
 | | I03–I05 | rebuilding the network and gazetteer gives the same fingerprint and keeps hand-mapped gates, sinks and alert history | exact |
 | | I06, I07 | after the worker is killed mid-poll and restarted, every source is polled within 120 s and nothing is duplicated | exact |
 | Feed | F01 | every entry in the Waze-format feed has its required fields, respects the specification's limits, has a unique id, and at least 80% of its line lies on a road with the street name it gives | exact |
+| Feed | F02 | no feed entry comes from a zone built on licensed traffic data (TomTom) | exact |
+| Crowd | C01, C02 | no crowd report reaches the feed unconfirmed; every report's zone lies within 40 m of its pin | exact |
 | External | X03 | from your timing sheet, DetourAI had the zone no later than Waze or Google Maps showed it, for ≥ 50% of zones | estimate |
 | External | X01, X02 | blind reviewer picks DetourAI's route or "both fine" for ≥ 70% of trips (estimate); never marks a DetourAI road impassable (exact) | mixed |
 
@@ -196,7 +198,7 @@ Tested in a Linux sandbox against real PostgreSQL 16, PostGIS 3.4, pgRouting 3.6
 - the review page in Chromium
 
 The verifier catches the four planted data faults, confirms the three v0.9 fixes, and passes every clean check
-(48 expectations in `verify/fixtures/expected.json`).
+(51 expectations in `verify/fixtures/expected.json`).
 
 Not tested:
 

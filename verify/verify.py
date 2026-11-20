@@ -933,8 +933,15 @@ def feed(c, rep: Report):
     if incs is None:
         rep.check("F01", 1, f"the feed endpoint answered HTTP {r.status_code}")
         return
+    pins = one(c, """SELECT count(*) n, count(*) FILTER (WHERE ST_Distance(r.geom::geography, z.geom::geography) > 40) off
+                     FROM client.report r JOIN geo.zone_of_avoidance z USING (zone_id) WHERE r.created_at > now() - interval '7 days'""")
+    if pins["n"]:
+        rep.check("C02", pins["off"], "reports.create: the zone was not drawn at the reported pin (snap or substring logic)")
+    else:
+        rep.skip("C02", "no crowd reports in the last 7 days")
     if not incs:
-        rep.skip("F01", "the feed is empty: no active zone is sure enough to publish right now")
+        for cid in ("F01", "F02", "C01"):
+            rep.skip(cid, "the feed is empty: no active zone is sure enough to publish right now")
         return
     bad, seen = [], set()
     for i in incs:
@@ -977,6 +984,14 @@ def feed(c, rep: Report):
             bad.append({"id": i.get("id"), "street": i.get("street"), "problems": p})
     rep.check("F01", len(bad), "feed builder (api/app/cifs.py): see each incident's problems; an off-road line means the zone's spine does not follow that street", bad)
     rep.detail("feed", {"incidents": len(incs), "closures": sum(1 for i in incs if i.get("type") == "ROAD_CLOSED"), "streets": sorted({i.get("street") for i in incs})[:20]})
+    zone_ids = sorted({int(m.group(1)) for i in incs if (m := re.match(r"dz(\d+)-", str(i.get("id") or "")))})
+    src = {r["zone_id"]: r for r in c.execute("SELECT zone_id, origin, corroborations, confirm_yes_w FROM geo.zone_of_avoidance WHERE zone_id = ANY(%s)", (zone_ids,)).fetchall()}
+    rep.check("F02", sum(1 for z in src.values() if z["origin"] == "FEED"),
+              "feed builder: a zone built from a licensed traffic feed (TomTom) is being passed on; cifs._ZONES must exclude origin FEED",
+              [z for z, r in src.items() if r["origin"] == "FEED"])
+    rep.check("C01", sum(1 for z in src.values() if z["origin"] == "CROWD" and z["corroborations"] < 2 and z["confirm_yes_w"] < 0.5),
+              "reports: a crowd report reached the feed with nobody confirming it; check start_confidence against CIFS_MIN_CONFIDENCE",
+              [z for z, r in src.items() if r["origin"] == "CROWD" and r["corroborations"] < 2 and r["confirm_yes_w"] < 0.5])
 
 
 def score_lead(rep: Report, sheet: Path):

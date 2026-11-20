@@ -5,7 +5,7 @@ graph, and gives each vehicle class a proper re-route: a scooter and a car do no
 detour. Backend-first; commuters get alerts over WhatsApp with a Google Maps handoff, fleets get
 an API/SDK. Design, plan and legal review live in the project doc; this repo is the build.
 
-## What works today (v0.10)
+## What works today (v0.11)
 
 | Piece | Where | Status |
 | --- | --- | --- |
@@ -95,13 +95,25 @@ message when it ends. A WhatsApp alert with no delivery receipt after 60 seconds
 Setup, including the two template texts to submit to Meta, is in `docs/CHANNEL_SETUP.md`. With nothing configured
 the code runs and sends nothing; the console's Feeds tab shows each channel's state and its next step.
 
+## What is public and what is not
+
+- **Saving a zone is an admin action.** `POST /v1/advisories/paste` is a dry run unless it carries the admin token;
+  nothing unsigned can create a closure, reroute traffic, alert subscribers or reach the feed.
+- **The public address reaches only the public surface.** When `PUBLIC_BASE_URL` is set, requests arriving for that
+  host get the webhooks, short links, the route card and its packs, and the closure feed. The console, the brief, the
+  review queue, sources and every admin endpoint answer 404 there and stay on the local address.
+- **Licensed feed data is not passed on.** Zones built from TomTom incidents are routed around but never appear in the
+  closure feed.
+
 ## Crowd reports and the Waze-format feed
 
 - **REPORT** on WhatsApp or Telegram: pick water, closed road or accident, share the pin. It becomes a small zone on
   that road, live for 45 minutes (accident) to 3 hours (closure) unless confirmed.
 - **Still blocked?** People alerted about a zone are asked once, 20 minutes later; a few people whose route passes an
   unconfirmed report are asked too. Answers are weighted by each person's trust. About one average person confirms a
-  report; about two more saying "clear" remove a crowd report, and shorten (never remove) a police closure.
+  report; about two more saying "clear" remove a crowd report, and shorten (never remove) a police closure. Only people
+  who were asked (their route passes the zone) or who reported it may answer, and an account with no confirmed report
+  of its own counts for 0.3 at most, so it takes two new accounts to confirm a report and four to end one.
 - **Trust** per reporter rises when their reports are confirmed and falls when refuted; it sets how sure their next
   report starts.
 - **Closure feed** at `/v1/feeds/cifs.json` and `.xml`, in Waze's CIFS format, for a traffic authority to register
@@ -132,10 +144,11 @@ in `verify/criteria.json`; the full guide, including what to collect and how to 
 
 | Command | What it runs |
 | --- | --- |
-| `make test` | 133 unit tests: advisory parser, normalization, Maps and Waze handoff, brief, packs, routing SQL, feed parsers, onboarding and report conversation, channel adapters, CIFS feed, trust and votes |
+| `make test` | 161 unit tests: advisory parser, normalization, Maps and Waze handoff, brief, packs, routing SQL, feed parsers, onboarding and report conversation, channel adapters, CIFS feed, trust and votes |
 | `make test-sql` | every SQL file and embedded statement through PostgreSQL's parser |
 | `make test-ui` | 25 browser tests of the console (routes, advisories, review, roads, feeds), brief and route card on preview data |
-| `make test-live` | 16 end-to-end tests against the running stack (skipped when it is down) |
+| `make test-live` | 18 end-to-end tests against the running stack (skipped when it is down) |
+| `DETOUR_DB=... python -m pytest -m db tests/integration` | reports, answers, trust and the feed against the database; creates and removes its own rows |
 
 `pip install -r requirements-dev.txt` and `python -m playwright install chromium` set up the tools. GitHub Actions
 runs the first three on every push (`.github/workflows/tests.yml`). The scenario catalogue, with manual checks for

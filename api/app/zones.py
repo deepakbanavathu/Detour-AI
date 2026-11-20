@@ -227,10 +227,19 @@ def commit_zone(c, z: Zone, ir_id: int | None, city_id: int = CITY_ID, force_sta
               geom = ST_Multi(ST_Union(geom, ST_GeomFromEWKT(%(g)s))),
               geom_utm = ST_Multi(ST_Union(geom_utm, ST_GeomFromEWKT(%(gu)s))),
               h3_cover_r9 = ARRAY(SELECT DISTINCT unnest(h3_cover_r9 || %(cells)s::h3index[])),
+              -- the published line grows with the zone. If the zone began as licensed feed data and a publishable
+              -- source now reports it, only the new source's line is kept.
+              spine = CASE WHEN %(spine)s::text IS NULL THEN spine
+                           WHEN spine IS NULL OR (origin = 'FEED' AND %(origin)s <> 'FEED') THEN ST_GeomFromEWKT(%(spine)s)
+                           ELSE ST_Union(spine, ST_GeomFromEWKT(%(spine)s)) END,
+              origin = CASE WHEN %(origin)s = 'ADVISORY' THEN 'ADVISORY'
+                            WHEN origin = 'FEED' AND %(origin)s = 'CROWD' THEN 'CROWD' ELSE origin END,
+              updated_at = now(),
               status = CASE WHEN status = 'CANDIDATE' THEN 'ACTIVE' ELSE status END
             WHERE zone_id = %(zid)s
             """,
-            {"conf": z.confidence, "vto": z.valid_to, "g": z.geom_ewkt, "gu": z.geom_utm_ewkt, "cells": z.h3_cover, "zid": zid},
+            {"conf": z.confidence, "vto": z.valid_to, "g": z.geom_ewkt, "gu": z.geom_utm_ewkt, "cells": z.h3_cover, "zid": zid,
+             "spine": z.spine_ewkt, "origin": z.origin},
         )
         n = c.execute("SELECT geo.apply_zone(%s) AS n", (zid,)).fetchone()["n"]
         c.commit()

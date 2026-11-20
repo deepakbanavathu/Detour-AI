@@ -477,6 +477,33 @@
       "threshold": 0.5,
       "estimate": true,
       "why": "from your hand-kept sheet: share of zones DetourAI had no later than Waze or Google Maps showed them"
+    },
+    {
+      "id": "F02",
+      "group": "feed",
+      "metric": "cifs_entries_from_licensed_feed",
+      "op": "==",
+      "threshold": 0,
+      "estimate": false,
+      "why": "zones built from TomTom incidents are routed around but never passed on to Waze or Google Maps"
+    },
+    {
+      "id": "C01",
+      "group": "crowd",
+      "metric": "crowd_zones_published_unconfirmed",
+      "op": "==",
+      "threshold": 0,
+      "estimate": false,
+      "why": "a crowd report enters the feed only after another person or source confirms it"
+    },
+    {
+      "id": "C02",
+      "group": "crowd",
+      "metric": "report_zones_off_their_pin",
+      "op": "==",
+      "threshold": 0,
+      "estimate": false,
+      "why": "every report's zone lies within 40 m of the pin the reporter shared"
     }
   ]
 }

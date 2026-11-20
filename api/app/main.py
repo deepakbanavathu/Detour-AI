@@ -39,6 +39,24 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="DetourAI API", version="0.1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
+# What may be reached through the public address (PUBLIC_BASE_URL). Everything else, including the console, the brief
+# and every admin endpoint, answers 404 there and stays reachable only on the local address.
+PUBLIC_PREFIXES = ("/webhooks/", "/r/", "/card/", "/v1/packs/")
+PUBLIC_PATHS = ("/sw.js", "/v1/feeds/cifs.json", "/v1/feeds/cifs.xml")
+_PUBLIC_HOST = PUBLIC_BASE_URL.split("://", 1)[-1].split("/", 1)[0].lower()
+
+
+def public_path_allowed(path: str) -> bool:
+    return path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES)
+
+
+@app.middleware("http")
+async def public_surface(request: Request, call_next):
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip().lower()
+    if _PUBLIC_HOST and host == _PUBLIC_HOST and not (public_path_allowed(request.url.path) and request.method in ("GET", "POST", "HEAD")):
+        return PlainTextResponse("Not found", status_code=404)
+    return await call_next(request)
+
 
 def _latlng(s: str) -> tuple[float, float]:
     try:
@@ -232,13 +250,16 @@ class PasteIn(BaseModel):
     source_handle: str = Field("@paste", max_length=60)
     source_cred: float = Field(0.8, ge=0, le=1)
     ts_published: datetime | None = None
-    commit: bool = Field(True, description="insert the zone and project it onto edges; false = dry run")
+    commit: bool = Field(False, description="save the zone and project it onto edges (admin token required); false = dry run")
     force_status: str | None = Field(None, pattern="^(ACTIVE|CANDIDATE)$")
 
 
 @app.post("/v1/advisories/paste")
-def advisory_paste(body: PasteIn):
-    """Demo moment one: a pasted post becomes a polygon. Returns IR, anchors, zone geometry and the edges affected."""
+def advisory_paste(body: PasteIn, x_admin_token: Annotated[str | None, Header()] = None):
+    """A pasted post becomes a polygon. Without the admin token this is always a dry run: nothing is saved, routed
+    around, sent to subscribers or published. Saving a zone is an admin action."""
+    if body.commit or body.force_status:
+        _admin(x_admin_token)
     ts = body.ts_published or datetime.now(timezone.utc)
     with conn() as c:
         msg_id = None

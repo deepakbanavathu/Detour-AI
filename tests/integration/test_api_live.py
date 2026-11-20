@@ -133,7 +133,7 @@ def test_health_counts_open_reviews_and_poll_now_needs_admin(api):
 
 def test_unplaceable_advisory_lands_in_review_and_can_be_dismissed(api):
     text = "Traffic diverted at Zzyzx Qwerty Chowrasta towards Madhapur due to road work"
-    d = api.post("/v1/advisories/paste", json={"text": text, "source_handle": "@pytest"}).json()
+    d = api.post("/v1/advisories/paste", headers=ADMIN, json={"text": text, "source_handle": "@pytest", "commit": True}).json()
     assert d["ok"] is False
     mine = [r for r in api.get("/v1/review").json() if "zzyzx" in r["sentence"]]
     assert mine and mine[0]["reason"] in ("UNRESOLVED", "AMBIGUOUS") and mine[0]["anchor"]
@@ -168,6 +168,28 @@ def test_cifs_feed_is_well_formed_json_and_xml(api):
     pv = api.get("/v1/feeds/cifs/preview").json()
     assert pv["incidents"] == len(j["incidents"]) and isinstance(pv["skipped"], list)
     assert api.get("/v1/route", params={"profile": "2W", "from": A, "to": B}).json()["waze_url"].startswith("https://waze.com/ul?ll=")
+
+
+def test_saving_an_advisory_is_an_admin_action(api):
+    text = "Waterlogging at Madhapur. Vehicles may take alternate routes"
+    before = api.get("/healthz").json()["active_zones"]
+    assert api.post("/v1/advisories/paste", json={"text": text, "commit": True}).status_code == 401
+    assert api.post("/v1/advisories/paste", json={"text": text, "commit": True, "source_cred": 1.0}, headers={"X-Admin-Token": "wrong"}).status_code == 401
+    assert api.post("/v1/advisories/paste", json={"text": text, "force_status": "ACTIVE"}).status_code == 401
+    assert api.post("/v1/advisories/paste", json={"text": text}).status_code == 200            # the default is a dry run
+    assert api.get("/healthz").json()["active_zones"] == before
+
+
+def test_public_address_reaches_only_the_public_surface(api):
+    host = os.environ.get("DETOUR_PUBLIC_HOST")                       # the host part of PUBLIC_BASE_URL, when the stack has one
+    if not host:
+        pytest.skip("DETOUR_PUBLIC_HOST not set")
+    h = {"Host": host}
+    for path in ("/console", "/brief", "/healthz", "/v1/sources", "/v1/review", "/v1/feeds/cifs/preview"):
+        assert api.get(path, headers=h).status_code == 404, path
+    assert api.post("/v1/advisories/paste", headers=h, json={"text": "Waterlogging at Madhapur today"}).status_code == 404
+    assert api.get("/v1/feeds/cifs.json", headers=h).status_code == 200 and api.get("/sw.js", headers=h).status_code == 200
+    assert api.get("/console").status_code == 200                     # the local address is unaffected
 
 
 def test_pages_are_served(api):

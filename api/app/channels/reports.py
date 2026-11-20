@@ -23,6 +23,7 @@ SNAP_M, HALF_LEN_M, SAME_PLACE_M = 40.0, 60.0, 30.0
 EXTEND_MIN, MAX_LIFE_H = 30, 12
 YES_TO_ACTIVATE, NO_TO_END = 0.5, 1.0            # summed trust: about one average person to confirm, two to end
 TRUST_MIN, TRUST_MAX = 0.1, 0.95
+UNPROVEN_WEIGHT = 0.3                             # an account with no confirmed report yet counts for this much at most
 
 
 def start_confidence(trust: float) -> float:
@@ -33,6 +34,12 @@ def start_confidence(trust: float) -> float:
 def adjust_trust(trust: float, outcome: str) -> float:
     step = {"CONFIRMED": 0.10, "REFUTED": -0.15, "EXPIRED": -0.03}.get(outcome, 0.0)
     return round(max(TRUST_MIN, min(TRUST_MAX, trust + step)), 3)
+
+
+def vote_weight(trust: float, proven: bool) -> float:
+    """How much one person's answer counts. New accounts are cheap to make, so until one of their own reports has been
+    confirmed their answer is capped: it takes two of them to confirm a report and four to end one."""
+    return round(trust if proven else min(trust, UNPROVEN_WEIGHT), 3)
 
 
 def vote_effect(origin: str, status: str, yes_w: float, no_w: float) -> str:
@@ -112,7 +119,16 @@ def vote(c, zone_id: int, sub_id: int, yes: bool, now: datetime | None = None, r
     z = c.execute("SELECT status, origin, confirm_yes_w, confirm_no_w, valid_from FROM geo.zone_of_avoidance WHERE zone_id = %s", (zone_id,)).fetchone()
     if z is None or z["status"] in ("EXPIRED", "REFUTED"):
         return {"status": z["status"] if z else "GONE", "effect": "KEEP"}
-    w = float((c.execute("SELECT trust FROM client.subscriber WHERE sub_id = %s", (sub_id,)).fetchone() or {"trust": 0.5})["trust"])
+    # only people who were asked about this zone (their route passes it) or who reported it may answer
+    asked = c.execute(
+        "SELECT (EXISTS (SELECT 1 FROM client.zone_check WHERE sub_id = %(s)s AND zone_id = %(z)s) "
+        "     OR EXISTS (SELECT 1 FROM client.report WHERE sub_id = %(s)s AND zone_id = %(z)s)) AS ok", {"s": sub_id, "z": zone_id}).fetchone()["ok"]
+    if not asked:
+        return {"status": z["status"], "effect": "IGNORED"}
+    who = c.execute(
+        "SELECT s.trust, EXISTS (SELECT 1 FROM client.report r WHERE r.sub_id = s.sub_id AND r.outcome = 'CONFIRMED') AS proven "
+        "FROM client.subscriber s WHERE s.sub_id = %s", (sub_id,)).fetchone() or {"trust": 0.5, "proven": False}
+    w = vote_weight(float(who["trust"]), bool(who["proven"]))
     yes_w, no_w = float(z["confirm_yes_w"]), float(z["confirm_no_w"])
     if record:
         prev = c.execute("SELECT answer FROM client.zone_check WHERE sub_id = %s AND zone_id = %s", (sub_id, zone_id)).fetchone()
@@ -124,7 +140,7 @@ def vote(c, zone_id: int, sub_id: int, yes: bool, now: datetime | None = None, r
             (sub_id, zone_id, now, yes, now))
     yes_w, no_w = (max(0.0, yes_w) + w, max(0.0, no_w)) if yes else (max(0.0, yes_w), max(0.0, no_w) + w)
     effect = vote_effect(z["origin"], z["status"], yes_w, no_w)
-    c.execute("UPDATE geo.zone_of_avoidance SET confirm_yes_w = %s, confirm_no_w = %s WHERE zone_id = %s", (yes_w, no_w, zone_id))
+    c.execute("UPDATE geo.zone_of_avoidance SET confirm_yes_w = %s, confirm_no_w = %s, updated_at = now() WHERE zone_id = %s", (yes_w, no_w, zone_id))
     status = z["status"]
     if yes:
         c.execute("UPDATE geo.zone_of_avoidance SET valid_to = LEAST(valid_from + make_interval(hours => %s), GREATEST(valid_to, %s)), "

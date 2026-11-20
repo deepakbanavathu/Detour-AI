@@ -15,6 +15,7 @@ open to agencies that manage traffic or public infrastructure, so the registrati
 
 ## What goes into it
 
+- Never zones built from TomTom incidents: licensed traffic data is used for routing here and is not passed on.
 - Only zones that are **active** and at least **75% sure** (`CIFS_MIN_CONFIDENCE`). A crowd report stays out until
   someone confirms it; a police advisory read with normal confidence goes in at once.
 - One entry **per street**, because a Waze closure may cover only one street. The line is the stretch of that street

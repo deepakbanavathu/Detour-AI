@@ -6,10 +6,11 @@ a phone or an account and are run before a demo or a release.
 
 | Suite | Command | Needs | Count |
 | --- | --- | --- | --- |
-| Unit | `make test` | Python only | 133 |
+| Unit | `make test` | Python only | 161 |
 | SQL parse | `make test-sql` | Python only | 298 statements |
 | Browser (preview data) | `make test-ui` | Playwright + Chromium | 25 |
-| Live end to end | `make test-live` | running stack with Hyderabad imported | 16 |
+| Live end to end | `make test-live` | running stack with Hyderabad imported | 18 |
+| Database | `pytest -m db tests/integration` with `DETOUR_DB` set | a database with a network imported | 1 (20 assertions) |
 
 ## 1. Advisory parsing (text to IR)
 
@@ -213,7 +214,21 @@ a phone or an account and are run before a demo or a release.
 | CF-07 | Console shows the feed and what was left out; Waze link beside Maps | as stated | Auto UI `test_feeds_tab_shows_the_closure_feed...`, `test_console_offers_waze_beside_google_maps` |
 | CF-08 | Feed submitted to Waze by an authority | accepted; closures appear in Waze and Google Maps | Manual, needs a Waze for Cities partner |
 
-## 13. Security and access
+## 13. Lock-down and review fixes (v0.11)
+
+| Id | Scenario | Expected | Runs |
+| --- | --- | --- | --- |
+| LK-01 | Saving an advisory without the admin token, with a wrong token, or forcing a status | 401; a plain call is a dry run and changes nothing | Auto live `test_saving_an_advisory_is_an_admin_action` |
+| LK-02 | Requests for the public host | only webhooks, short links, card, packs, service worker and the feed; console, brief, health, sources, review, preview and paste answer 404; the local address is unaffected | Auto `test_public_surface.py` (26 cases), Auto live `test_public_address_reaches_only_the_public_surface` |
+| LK-03 | A TomTom-built zone | routed around, never in the feed | Auto db `test_report_answers_trust_and_feed`, verifier criterion F02 |
+| LK-04 | A zone confirmed by a second source | the published line covers both stretches; update time moves | Manual on the stack |
+| LK-05 | An answer from someone never asked | ignored | Auto db |
+| LK-06 | Unproven accounts | one yes is not enough, two activate; two no are not enough to end | Auto `test_an_unproven_account_counts_for_less`, Auto db |
+| LK-07 | People who agreed before reports existed | asked once before their first report; declining leaves alerts unchanged | Auto `test_people_who_agreed_before_reports_existed_are_asked_once` |
+| LK-08 | Report pin, question to people on the route, trust after confirmation, removal by a proven reporter | as stated | Auto db |
+| LK-09 | No crowd report in the feed unconfirmed; report zones within 40 m of their pin | 0 violations | Verifier criteria C01, C02 |
+
+## 14. Security and access
 
 | Id | Scenario | Expected | Runs |
 | --- | --- | --- | --- |

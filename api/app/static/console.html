@@ -537,9 +537,10 @@ $("check").onclick = () => advisory(false);
 $("add").onclick = () => advisory(true);
 async function advisory(commit){
   if (commit && !live) { toast("Preview data cannot be changed. Start the API to add zones.", true); return; }
+  if (commit && !needAdmin()) return;
   const btn = commit ? $("add") : $("check"), label = btn.textContent; btn.disabled = true; btn.textContent = commit ? "Adding zone…" : "Checking…";
   try {
-    const d = live ? await api("/v1/advisories/paste", {method:"POST", headers:{"Content-Type":"application/json"},
+    const d = live ? await api("/v1/advisories/paste", {method:"POST", headers: commit ? adminHeaders() : {"Content-Type":"application/json"},
                        body:JSON.stringify({text:$("post").value, source_cred:+$("cred").value, commit})}) : DEMO.paste;
     showReading(d);
     if (d.ok && commit) { toast(d.zone.status === "MERGED" ? "Zone merged into an existing one" : d.zone.status === "ACTIVE" ? "Zone added" : "Zone added as unconfirmed"); loadZones(); }

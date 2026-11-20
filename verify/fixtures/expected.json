@@ -11,7 +11,9 @@
   "V07": "1.5 m two-way gate lane: a scooter fits, a car does not (fixed in v0.9)",
   "T03": "scooter trip through the gate lane is on a 2W-allowed edge (fixed in v0.9)",
   "I05": "a hand-mapped gate with a cut set, a sink and an alert survive the rebuild (fixed in v0.9)",
-  "F01": "the Waze-format feed for one police closure is valid and lies on the named roads"
+  "F01": "the Waze-format feed for one police closure is valid and lies on the named roads",
+  "F02": "no feed entry comes from a licensed traffic feed",
+  "C01": "no unconfirmed crowd report in the feed"
  },
  "expected": {
   "A01": "pass",
@@ -20,7 +22,10 @@
   "A04": "fail",
   "A05": "pass",
   "A06": "pass",
+  "C01": "pass",
+  "C02": "skip",
   "F01": "pass",
+  "F02": "pass",
   "G01": "pass",
   "G02": "pass",
   "G03": "pass",

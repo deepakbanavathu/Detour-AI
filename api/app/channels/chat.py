@@ -7,14 +7,14 @@ from __future__ import annotations
 
 import math
 
-CONSENT_VERSION = "2026-11-v1"
+CONSENT_VERSION = "2026-11-v2"      # v2 adds the sentence on report pins
 WINDOWS = {"both": [(420, 600), (1020, 1260)], "am": [(420, 600)], "pm": [(1020, 1260)]}     # minutes of day, IST
 MIN_TRIP_M = 300.0
 
 NOTICE = (
     "DetourAI messages you when a road closure or flooding touches your regular route in Hyderabad.\n\n"
     "To do that it keeps your start and end pins, your travel times, your vehicle type and the alerts it sent you. "
-    "It does not track where you are.\n\n"
+    "It does not track where you are. If you send a REPORT, the pin you share for it is kept with the report.\n\n"
     "Reply STOP to end, DELETE to erase everything, SHOW to see what is kept. You must be 18 or older.\n\n"
     "Set up alerts from DetourAI on this chat?")
 HELP = ("Send REPORT to pin water, a closed road or an accident for others. SHOW shows what is kept, STOP pauses alerts, "
@@ -40,6 +40,8 @@ ASK_WORK = ask_location("And where does it end? Share that place as a location p
 ASK_WINDOWS = buttons("When do you travel?", [("win_both", "Morning and evening"), ("win_am", "Morning only"), ("win_pm", "Evening only")])
 ASK_CONSENT = buttons(NOTICE, [("consent_yes", "Yes, send alerts"), ("consent_no", "No thanks")])
 ASK_REPORT_KIND = buttons("What do you want to report? Send CANCEL to go back.", [("rep_water", "Water on road"), ("rep_closed", "Road closed"), ("rep_accident", "Accident")])
+ASK_REPORT_CONSENT = buttons("Reports are new. The pin you share for a report is kept with it, so others on that road can be warned; "
+                             "DELETE erases your link to it. OK to go ahead?", [("rep_ok", "Yes, go ahead"), ("rep_no", "No")])
 ASK_REPORT_PIN = ask_location("Share the exact spot as a location pin, once you are stopped safely. Send CANCEL to go back.")
 
 
@@ -81,6 +83,20 @@ def step(state: dict | None, msg: dict) -> tuple[dict, list[dict], list[dict]]:
         return s, [], []
 
     # ---- reporting: two steps, then back to where the person was
+    if s["step"] == "REPORT_CONSENT":
+        choice = _pick(msg, {"rep_ok": "yes", "rep_no": "no"}, {"YES": "yes", "OK": "yes", "NO": "no", "CANCEL": "no"})
+        if choice == "yes":
+            s["data"]["consent_version"] = CONSENT_VERSION
+            s["step"] = "REPORT_KIND"
+            return s, [ASK_REPORT_KIND], [{"do": "consent", "version": CONSENT_VERSION}]
+        if choice == "no":
+            s["data"].pop("report", None)
+            s["step"] = "DONE"
+            return s, [text("No report was made. Your alerts carry on as before.")], []
+        if w not in ("STOP", "UNSUBSCRIBE", "DELETE"):
+            return s, [ASK_REPORT_CONSENT], []
+        s["data"].pop("report", None)
+        s["step"] = "DONE"
     if s["step"] in ("REPORT_KIND", "REPORT_PIN"):
         back = (s["data"].get("report") or {}).get("back", "DONE")
         if w in ("CANCEL", "BACK", "NO"):
@@ -110,6 +126,9 @@ def step(state: dict | None, msg: dict) -> tuple[dict, list[dict], list[dict]]:
             return s, [text("Finish setting up your route first, then you can report. " + ("Send START to turn alerts back on." if s["step"] == "STOPPED" else "Say hi to begin."
                                                                                               if s["step"] in ("NEW", "CONSENT") else "You are a few answers away."))], []
         s["data"]["report"] = {"back": "DONE"}
+        if s["data"].get("consent_version") != CONSENT_VERSION:      # agreed before reports existed: ask once
+            s["step"] = "REPORT_CONSENT"
+            return s, [ASK_REPORT_CONSENT], []
         s["step"] = "REPORT_KIND"
         return s, [ASK_REPORT_KIND], []
 
@@ -142,6 +161,7 @@ def step(state: dict | None, msg: dict) -> tuple[dict, list[dict], list[dict]]:
         choice = _pick(msg, {"consent_yes": "yes", "consent_no": "no"}, {"YES": "yes", "NO": "no"})
         if choice == "yes":
             s["step"] = "VEHICLE"
+            s["data"]["consent_version"] = CONSENT_VERSION
             return s, [ASK_VEHICLE], [{"do": "consent", "version": CONSENT_VERSION}]
         if choice == "no":
             return {"step": "NEW", "data": {}}, [text("No problem. Nothing was saved. Say hi if you change your mind.")], []

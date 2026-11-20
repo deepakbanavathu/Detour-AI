@@ -10,6 +10,9 @@ review), SMS (days to weeks, DLT).
    `python -c "import secrets;print(secrets.token_urlsafe(32))"`. Phone numbers and pins are encrypted with the key;
    chat ids are matched through an HMAC with the pepper. **Changing either later makes existing subscribers unreadable.**
 2. Give the API a public https address (a Cloudflare Tunnel hostname) and set `PUBLIC_BASE_URL` to it, with no trailing slash.
+   Requests arriving for that host can reach only `/webhooks/*`, `/r/*`, `/card/*`, `/sw.js`, `/v1/packs/*` and
+   `/v1/feeds/cifs.json|xml`; the console and every admin endpoint answer 404 there. Check it once:
+   `curl -i <PUBLIC_BASE_URL>/console` must say 404. Keep using `http://127.0.0.1:8080/console` yourself.
 3. `docker compose up -d --build` then `docker compose exec db bash /migrate.sh` (migration 010 adds the channel tables).
 
 ## 1. Telegram

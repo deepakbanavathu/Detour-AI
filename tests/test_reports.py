@@ -3,7 +3,8 @@ import pytest
 
 from app.channels import chat, reports
 
-DONE = {"step": "DONE", "data": {"profile": "2W", "windows": "both"}}
+DONE = {"step": "DONE", "data": {"profile": "2W", "windows": "both", "consent_version": chat.CONSENT_VERSION}}
+OLD = {"step": "DONE", "data": {"profile": "2W", "windows": "both", "consent_version": "2026-11-v1"}}      # agreed before reports existed
 
 
 def t(text):
@@ -106,3 +107,26 @@ def test_malformed_check_buttons_do_nothing():
 
 def test_help_mentions_report():
     assert "REPORT" in chat.HELP
+
+
+def test_people_who_agreed_before_reports_existed_are_asked_once():
+    s, r, e = chat.step(OLD, t("report"))
+    assert s["step"] == "REPORT_CONSENT" and r[0] is chat.ASK_REPORT_CONSENT and e == []
+    assert "pin you share for a report is kept" in r[0]["text"]
+    s2, r2, e2 = chat.step(s, b("rep_ok"))
+    assert s2["step"] == "REPORT_KIND" and e2 == [{"do": "consent", "version": chat.CONSENT_VERSION}] and s2["data"]["consent_version"] == chat.CONSENT_VERSION
+    s3, r3, e3 = chat.step(s2, b("rep_closed"))
+    assert s3["step"] == "REPORT_PIN"
+    s4, r4, e4 = chat.step(s, b("rep_no"))                        # declining leaves alerts as they were
+    assert s4["step"] == "DONE" and e4 == [] and "report" not in s4["data"] and s4["data"]["consent_version"] == "2026-11-v1"
+    s5, _, e5 = chat.step(s, t("STOP"))
+    assert s5["step"] == "STOPPED" and e5 == [{"do": "stop"}]
+
+
+def test_an_unproven_account_counts_for_less():
+    assert reports.vote_weight(0.5, proven=False) == 0.3 and reports.vote_weight(0.2, proven=False) == 0.2
+    assert reports.vote_weight(0.6, proven=True) == 0.6
+    w = reports.vote_weight(0.5, False)
+    assert reports.vote_effect("CROWD", "CANDIDATE", w, 0) == "KEEP" and reports.vote_effect("CROWD", "CANDIDATE", 2 * w, 0) == "ACTIVATE"      # two new accounts to confirm
+    assert reports.vote_effect("CROWD", "ACTIVE", 0, 3 * w) == "KEEP" and reports.vote_effect("CROWD", "ACTIVE", 0, 4 * w) == "REFUTE"           # four to end
+    assert reports.vote_effect("ADVISORY", "ACTIVE", 0, 4 * w) == "DECAY"

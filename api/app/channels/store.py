@@ -93,6 +93,8 @@ def apply(c, channel: str, raw_id: str, idh: bytes, state: dict, effects: list[d
         if do == "consent":
             state["data"]["consent_at"] = datetime.now(timezone.utc).isoformat()
             state["data"]["consent_version"] = e["version"]
+            c.execute("UPDATE client.subscriber SET consent_at = now(), consent_text_version = %s WHERE channel = %s AND channel_id_hmac = %s",
+                      (e["version"], channel, idh))                # a re-consent by an existing subscriber
         elif do == "hold_home":
             _hold(c, channel, idh, "home_enc", e["lat"], e["lng"])
         elif do == "hold_work":

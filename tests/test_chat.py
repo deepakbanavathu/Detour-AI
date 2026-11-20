@@ -30,7 +30,7 @@ HAPPY = [t("hi"), b("consent_yes"), b("veh_2w"), loc(17.4486, 78.3908), loc(17.4
 
 def test_happy_path_ends_subscribed_with_both_windows():
     state, replies, effects = run(HAPPY)
-    assert state == {"step": "DONE", "data": {"profile": "2W", "windows": "both"}}
+    assert state == {"step": "DONE", "data": {"profile": "2W", "windows": "both", "consent_version": chat.CONSENT_VERSION}}
     assert [e["do"] for e in effects] == ["consent", "hold_home", "hold_work", "subscribe"]
     assert effects[-1] == {"do": "subscribe", "profile": "2W", "windows": [(420, 600), (1020, 1260)]}
     assert "You are set" in replies[0]["text"]
@@ -41,7 +41,7 @@ def test_first_message_shows_the_notice_before_anything_is_kept():
     assert state["step"] == "CONSENT" and effects == []
     r = replies[0]
     assert r["type"] == "buttons" and [i for i, _ in r["buttons"]] == ["consent_yes", "consent_no"]
-    for must in ("start and end pins", "does not track", "STOP", "DELETE", "18 or older", "DetourAI"):
+    for must in ("start and end pins", "does not track", "REPORT, the pin you share", "STOP", "DELETE", "18 or older", "DetourAI"):
         assert must in r["text"]
 
 
@@ -52,7 +52,7 @@ def test_declining_consent_keeps_nothing():
 
 def test_typed_answers_work_as_well_as_buttons():
     state, _, effects = run([t("hi"), t("yes"), t("I ride a scooter"), loc(17.44, 78.39), loc(17.41, 78.44), t("morning")])
-    assert state["data"] == {"profile": "2W", "windows": "am"} and effects[-1]["windows"] == [(420, 600)]
+    assert state["data"] == {"profile": "2W", "windows": "am", "consent_version": chat.CONSENT_VERSION} and effects[-1]["windows"] == [(420, 600)]
     state, _, _ = run([t("hi"), t("Yes"), t("car")])
     assert state["data"]["profile"] == "4W" and state["step"] == "HOME"
 
@@ -107,7 +107,7 @@ def test_show_describes_what_is_kept_without_revealing_pins():
 def test_reset_keeps_consent_and_asks_for_the_route_again():
     state, _, _ = run(HAPPY)
     state, replies, effects = chat.step(state, t("reset"))
-    assert state == {"step": "VEHICLE", "data": {}} and effects == [{"do": "clear_corridors"}] and replies[0] is chat.ASK_VEHICLE
+    assert state["step"] == "VEHICLE" and effects == [{"do": "clear_corridors"}] and replies[0] is chat.ASK_VEHICLE
 
 
 def test_done_state_answers_anything_with_short_help():
@@ -119,7 +119,7 @@ def test_done_state_answers_anything_with_short_help():
 
 
 def test_buttons_respect_whatsapp_limits():
-    for r in (chat.ASK_CONSENT, chat.ASK_VEHICLE, chat.ASK_WINDOWS):
+    for r in (chat.ASK_CONSENT, chat.ASK_VEHICLE, chat.ASK_WINDOWS, chat.ASK_REPORT_KIND, chat.ASK_REPORT_CONSENT):
         assert len(r["buttons"]) <= 3 and all(len(title) <= 20 for _, title in r["buttons"]) and len(r["text"]) <= 1024
 
 

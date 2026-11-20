@@ -129,11 +129,12 @@ def to_xml(incidents: list[dict]) -> str:
 # ---------------------------------------------------------------- build from the database
 
 _ZONES = """
-SELECT z.zone_id, z.event_type, z.cause, z.penalty_factor, z.bearing_center, z.valid_from, z.valid_to, z.created_at,
+SELECT z.zone_id, z.event_type, z.cause, z.penalty_factor, z.bearing_center, z.valid_from, z.valid_to, z.created_at, z.updated_at,
        z.confidence, z.origin, COALESCE(ST_Dimension(z.spine), -1) AS spine_dim
 FROM geo.zone_of_avoidance z
 WHERE z.city_id = %s AND z.status = 'ACTIVE' AND z.valid_to > now() AND z.valid_from <= now() + interval '7 days'
   AND z.confidence >= %s
+  AND z.origin <> 'FEED'          -- zones built from a licensed traffic feed (TomTom) are never passed on
 ORDER BY z.zone_id
 """
 
@@ -171,7 +172,7 @@ def build(c, city_id: int = CITY_ID, min_confidence: float = CIFS_MIN_CONFIDENCE
     incidents: list[dict] = []
     skipped: list[dict] = []
     for z in c.execute(_ZONES, (city_id, min_confidence)).fetchall():
-        base = {"creationtime": ts(z["created_at"]), "updatetime": ts(max(z["created_at"], z["valid_from"])),
+        base = {"creationtime": ts(z["created_at"]), "updatetime": ts(max(z["created_at"], z["updated_at"])),
                 "description": DESCRIPTION.get(z["cause"], "Traffic restriction"),
                 "starttime": ts(z["valid_from"]), "endtime": ts(z["valid_to"])}
         rows = c.execute(_LINES, (z["zone_id"],)).fetchall() if z["spine_dim"] == 1 else []
