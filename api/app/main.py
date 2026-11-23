@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auth, brief as briefmod, cifs, feedback, gazetteer, geocode, maps, packs, pipeline, profiles, routing, zones
+from . import auth, brief as briefmod, cifs, feedback, gazetteer, geocode, maps, packs, pipeline, profiles, routing, usage, zones
 from .channels import chat, fanout, sms, telegram, whatsapp
 from .channels import store as chan_store
 from .config import (ADMIN_TOKEN, CITY_ID, PUBLIC_BASE_URL, SMS_PROVIDER, TELEGRAM_WEBHOOK_SECRET, WHATSAPP_ALERT_TEMPLATE,
@@ -996,8 +996,9 @@ def pack_reroute(route_id: int, lat: float = Query(..., ge=-90, le=90), lng: flo
 class CorrectionIn(BaseModel):
     osm_way_id: int
     seg: int
-    kind: str = Field(pattern="^(GATE_CLOSED|TOO_NARROW|NO_ENTRY)$")
+    kind: str = Field(pattern="^(GATE_CLOSED|TOO_NARROW|NO_ENTRY|SKIPPED)$")
     action: str = Field(pattern="^(apply|dismiss)$")
+    decide_as: str | None = Field(None, pattern="^(GATE_CLOSED|TOO_NARROW|NO_ENTRY)$", description="for a skipped stretch: what it is")
 
 
 @app.get("/v1/corrections")
@@ -1011,4 +1012,29 @@ def corrections():
 def correction_close(body: CorrectionIn, x_admin_token: Annotated[str | None, Header()] = None):
     _admin(x_admin_token)
     with conn() as c:
-        return feedback.close(c, body.osm_way_id, body.seg, body.kind, body.action)
+        try:
+            return feedback.close(c, body.osm_way_id, body.seg, body.kind, body.action, decide_as=body.decide_as)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+
+
+# ---------------------------------------------------------------- what happens on the live route, with consent
+
+class TripEventsIn(BaseModel):
+    events: list[dict] = Field(max_length=usage.MAX_BATCH)
+
+
+@app.post("/v1/trips/{token}/events")
+def trip_events(token: str, body: TripEventsIn):
+    """Start, switch, leaving the route and arrival, sent by the page only when the rider agreed to share them."""
+    with conn() as c:
+        t = _trip_or_404(c, token)
+        return usage.record(c, t, body.events, packs.TRIP_PROFILE.get(t["profile"], "2W"))
+
+
+@app.get("/v1/usage")
+def usage_summary(days: int = Query(7, ge=1, le=90)):
+    """For the product owner: trips started and finished on the live route, switches, departures, and which app
+    alert links were opened in."""
+    with conn() as c:
+        return usage.summary(c, days)

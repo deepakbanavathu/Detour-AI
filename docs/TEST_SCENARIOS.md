@@ -6,11 +6,11 @@ a phone or an account and are run before a demo or a release.
 
 | Suite | Command | Needs | Count |
 | --- | --- | --- | --- |
-| Unit | `make test` | Python only | 179 |
+| Unit | `make test` | Python only | 183 |
 | SQL parse | `make test-sql` | Python only | 298 statements |
-| Browser (preview data) | `make test-ui` | Playwright + Chromium | 39 |
+| Browser (preview data) | `make test-ui` | Playwright + Chromium | 42 |
 | Live end to end | `make test-live` | running stack with Hyderabad imported | 22 |
-| Database | `pytest -m db tests/integration` with `DETOUR_DB` set | a database with a network imported | 3 |
+| Database | `pytest -m db tests/integration` with `DETOUR_DB` set | a database with a network imported | 4 |
 
 ## 1. Advisory parsing (text to IR)
 
@@ -295,7 +295,21 @@ a phone or an account and are run before a demo or a release.
 | RC-14 | Applying needs admin; corrections list is not reachable on the public address | 401; 404 | Sandbox API run |
 | RC-15 | On the road: do riders answer the question, and is the new route sensible | to be learned | Manual, with real riders |
 
-## 18. Security and access
+## 18. Learning from where riders go (v0.16)
+
+| Id | Scenario | Expected | Runs |
+| --- | --- | --- | --- |
+| UE-01 | Events accepted | start, switch, departure with its point, arrival; nothing malformed, older than two days, from the future, or without a time zone; one batch of 20 at most | Auto `test_usage.py::test_accept_keeps_well_formed_recent_events_only` |
+| UE-02 | Which stretch a departure skipped | follows the direction of travel, including a stretch driven against its drawing | Auto `test_the_skipped_stretch_follows_the_direction_of_travel` |
+| UE-03 | When departures add up to a correction | three riders on two days; not one rider many times, not three riders on one day, not two riders | Auto `test_a_correction_needs_several_riders_on_different_days` |
+| UE-04 | Real database: departures stored with the skipped stretch; two riders no, three yes, once; applied as the operator decided; not reopened right after; usage counted | as stated | Auto db `test_departures_become_a_correction` (found and fixed: a decision used to reopen at once) |
+| UE-05 | Asking to share | asked once before the first trip; nothing starts until answered; "No thanks" still starts; can be turned off; nothing recorded when off | Auto UI `test_sharing_is_asked_once...`, `test_declining_to_share...` |
+| UE-06 | What is sent | kind, route, time, and for a departure only the last point on the route | Auto UI (same test) |
+| UE-07 | Console | usage card with completion and the split of alert opens; a skipped stretch offers too narrow, no entry, gate closed, nothing wrong | Auto UI `test_console_usage_card_and_deciding_a_skipped_stretch` |
+| UE-08 | Over HTTP | events through the public address; usage needs sign-in and is not on the public address; DELETE removes events | Sandbox API run; Auto live `test_trip_events_and_usage_endpoints` |
+| UE-09 | On the road: do riders agree to share, and do real departures point at real problems | to be learned | Manual, with real riders |
+
+## 19. Security and access
 
 | Id | Scenario | Expected | Runs |
 | --- | --- | --- | --- |

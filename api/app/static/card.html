@@ -63,6 +63,8 @@ button{font:inherit;color:inherit} :focus-visible{outline:3px solid var(--divert
 .why .opts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
 .why button{border:1px solid var(--rule);background:var(--ground);color:var(--ink);border-radius:6px;padding:10px 6px;font-weight:600;cursor:pointer}
 .hz{width:30px;height:27px} .hz svg{display:block;filter:drop-shadow(0 1px 2px rgba(20,22,24,.45))}
+.sheet .yes{width:100%;border:0;background:var(--inform);color:#fff;border-radius:6px;padding:13px;font-weight:600;font-size:16px;cursor:pointer}
+.more button.link{border:0;background:none;padding:0;color:var(--inform);font:inherit;font-weight:600;cursor:pointer;text-decoration:underline}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(120px + env(safe-area-inset-bottom,0px));z-index:11;background:var(--asphalt);color:#fff;padding:9px 14px;border-radius:6px;font-weight:600;font-size:14px;max-width:calc(100% - 24px);text-align:center}
 </style>
 </head>
@@ -111,6 +113,14 @@ button{font:inherit;color:inherit} :focus-visible{outline:3px solid var(--divert
     <button class="kind plain" data-fb="NO_ENTRY">No entry here</button>
   </div>
   <button class="cancel" id="sheet-cancel">Cancel</button>
+</section>
+<section class="sheet" id="share" role="dialog" aria-modal="true" aria-labelledby="share-h" hidden>
+  <h2 id="share-h">Help fix the routes?</h2>
+  <p>This page can tell DetourAI when you start, change route, leave the route and arrive. When you leave the route it
+    sends only the last point on it, never your track. Several riders leaving at the same place shows a road that is
+    wrong on the map, so it gets fixed for everyone.</p>
+  <button class="yes" id="share-yes">Yes, share</button>
+  <button class="cancel" id="share-no">No thanks</button>
 </section>
 <div class="toast" id="toast" role="status" hidden></div>
 <script>
@@ -186,6 +196,7 @@ function setState(){
 function chooseFromHash(){ const h = location.hash.replace("#", "").toUpperCase(); if (pack.routes[h]) setActive(h, false); }
 function setActive(label, say = true){
   if (!pack.routes[label]) return;
+  if (label !== active && typeof started === "function" && started()) { active = label; logEvent("SWITCH"); }
   active = label; spoken.clear(); proposed = null; $("alert").hidden = true;
   if (location.hash !== "#" + label) history.replaceState(null, "", "#" + label);
   renderBar(); paint(); guide();
@@ -253,7 +264,7 @@ function guide(){
   $("what").textContent = pos ? next.text : r.turns[0].text;
   $("then").textContent = pos && after ? `Then: ${after.text}` : `Route ${active}${r.via?.length ? " via " + r.via.join(", ") : ""}. Usual time ${pack.usual_minutes} min.`;
   if (pos) for (const [mark, lead] of [[300, "In 300 metres, "], [60, ""]]) { const k = next.at_m + ":" + mark; if (left <= mark && !spoken.has(k) && next.text !== "Arrive") { spoken.add(k); speak(lead + next.text); break; } }
-  if (pos && next.text === "Arrive" && left < 40 && !spoken.has("arrive")) { spoken.add("arrive"); speak("You have arrived"); }
+  if (pos && next.text === "Arrive" && left < 40 && !spoken.has("arrive")) { spoken.add("arrive"); speak("You have arrived"); logEvent("ARRIVE"); }
   hazardAhead(along);
   crawlCheck(along);
 }
@@ -285,10 +296,44 @@ function onPosition(lng, lat){
 }
 $("recenter").onclick = () => { follow = true; $("recenter").hidden = true; if (pos && map) map.easeTo({center:pos, zoom:Math.max(map.getZoom(), 15.5), duration:500}); };
 
+/* ---------- trip events, only with the rider's agreement ---------- */
+const askShare = () => !!tripToken || params.has("share");
+const SHARE_KEY = "share-events", QUEUE_KEY = "events:" + (tripToken || "preview");
+const shareChoice = () => { try { return localStorage.getItem(SHARE_KEY); } catch { return null; } };
+let eventQueue = []; try { eventQueue = JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]"); } catch {}
+function saveQueue(){ try { localStorage.setItem(QUEUE_KEY, JSON.stringify(eventQueue.slice(-100))); } catch {} }
+function logEvent(kind, extra = {}){
+  if (!askShare() || shareChoice() !== "yes") return;
+  eventQueue.push({kind, route: active, at: new Date().toISOString(), ...extra}); saveQueue(); flushEvents();
+}
+async function flushEvents(){
+  if (!tripToken || !eventQueue.length || !navigator.onLine || flushEvents.busy) return;
+  flushEvents.busy = true;
+  const batch = eventQueue.slice(0, 20);
+  try { const r = await fetch(`/v1/trips/${tripToken}/events`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({events:batch})});
+        if (r.ok || r.status === 422) { eventQueue = eventQueue.slice(batch.length); saveQueue(); } }      // 422: malformed, never retry it
+  catch {} finally { flushEvents.busy = false; }
+}
+function askToShare(){                    // once per phone; resolves when the rider has answered
+  if (!askShare() || shareChoice()) return Promise.resolve();
+  return new Promise(done => {
+    const answer = v => () => { try { localStorage.setItem(SHARE_KEY, v); } catch {} $("share").hidden = true; $("scrim").hidden = true; showShareLine(); done(); };
+    $("share-yes").onclick = answer("yes"); $("share-no").onclick = answer("no");
+    $("share").hidden = false; $("scrim").hidden = false; $("share-yes").focus();
+  });
+}
+function showShareLine(){
+  if (!askShare() || !shareChoice()) return;
+  const on = shareChoice() === "yes";
+  let el = $("share-line"); if (!el) { el = document.createElement("div"); el.id = "share-line"; $("more").after(el); el.className = "more"; }
+  el.innerHTML = `Sharing trip events: ${on ? "on" : "off"}. <button class="link" id="share-toggle">${on ? "Turn off" : "Turn on"}</button>`;
+  $("share-toggle").onclick = () => { try { localStorage.setItem(SHARE_KEY, on ? "no" : "yes"); } catch {} if (on) { eventQueue = []; saveQueue(); } showShareLine(); };
+}
+
 /* ---------- the route was wrong: say why in one tap, then get a way from here ---------- */
 const OFF_ASK_MS = 12e3;
 let offSince = null, whyAsked = false, lastOn = null;
-function askWhy(){ whyAsked = true; $("why-text").textContent = `You left Route ${active}. What happened?`; $("why").hidden = false; }
+function askWhy(){ whyAsked = true; if (lastOn) logEvent("OFF_ROUTE", {lat:lastOn[1], lng:lastOn[0]}); $("why-text").textContent = `You left Route ${active}. What happened?`; $("why").hidden = false; }
 async function sendFeedback(kind, at){
   if (source === "preview") { toast("Preview: nothing was sent."); return null; }
   if (!tripToken) return null;                                    // a team route has no subscriber to speak for
@@ -368,7 +413,9 @@ function nearZone(){
 async function toggleStart(){
   if (simTimer || wake !== null) { clearInterval(simTimer); simTimer = null; if (wake?.release) wake.release(); wake = null; if (toggleStart.watch) navigator.geolocation.clearWatch(toggleStart.watch);
     follow = true; $("recenter").hidden = true; if (map) map.easeTo({pitch:0, bearing:0, duration:400}); renderBar(); return; }
+  await askToShare();                      // asked once, before the first trip; the answer is kept on this phone
   try { wake = (await navigator.wakeLock?.request("screen")) || true; } catch { wake = true; }
+  logEvent("START");
   if (params.has("sim") || source === "preview") {                       // demo and tests: drive the active route
     let m = 0; const step = +(params.get("step") || 120);
     simTimer = setInterval(() => { const L = lines[active]; m += step; const p = pointAt(L.coords, L.cum, m); onPosition(p[0], p[1]); if (m >= L.cum[L.cum.length-1]) { clearInterval(simTimer); simTimer = null; renderBar(); } }, +(params.get("tick") || 700));
@@ -381,6 +428,7 @@ async function toggleStart(){
 
 /* ---------- when there is data: ask which route is best now ---------- */
 async function poll(){
+  flushEvents();
   if (source !== "live" || !navigator.onLine) { setState(); return; }
   try {
     if (pack.rerouted) { setState(); return; }                 // a route made from here is not the saved trip; leave it be
@@ -402,12 +450,13 @@ function prepare(){
   const standalone = matchMedia("(display-mode: standalone)").matches;
   $("more").innerHTML = (apps.length ? `Prefer another app? ${apps.join(" or ")}.` : "") + (tripToken && !standalone ? " Add this page to your home screen from the browser menu to open it like an app." : "");
   $("more").hidden = !$("more").innerHTML;
+  showShareLine();
   setState(); renderBar(); paint(); guide();
 }
 (async () => {
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("/sw.js", {scope:"/"}).catch(() => {});
   await loadPack(); prepare(); chooseFromHash(); await initMap();
-  addEventListener("hashchange", chooseFromHash); addEventListener("online", poll); addEventListener("offline", setState);
+  addEventListener("hashchange", chooseFromHash); addEventListener("online", poll); addEventListener("offline", setState); addEventListener("online", flushEvents);
   setInterval(poll, 60e3); poll();
   setInterval(() => { if (pos) crawlCheck(lastAlong); }, 30e3);      // a stopped phone sends no new fixes; keep checking anyway
   if (params.has("sim")) toggleStart();

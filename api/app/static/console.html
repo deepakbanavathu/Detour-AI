@@ -232,7 +232,9 @@ dialog h2{margin:0 0 6px;font-size:17px}
       </div>
 
       <div class="pane" id="p-feeds" role="tabpanel" aria-labelledby="t-feeds">
-        <h2 style="margin-top:0">Going out</h2>
+        <h2 style="margin-top:0">How people use the live route</h2>
+        <div id="usage" aria-live="polite"></div>
+        <h2>Going out</h2>
         <div id="channels" aria-live="polite"></div>
         <h2>Coming in</h2>
         <p class="hint" style="margin-top:0">Where advisories, incidents and rain come from, and whether each one is working.</p>
@@ -346,7 +348,10 @@ const DEMO = {
   reports:[{report_id:1, kind:"WATER", outcome:"PENDING", created_at:new Date(Date.now()-9*60e3).toISOString(), lat:17.4262, lng:78.4380},
     {report_id:2, kind:"CLOSED", outcome:"CONFIRMED", created_at:new Date(Date.now()-41*60e3).toISOString(), lat:17.4420, lng:78.4010},
     {report_id:3, kind:"ACCIDENT", outcome:"PENDING", created_at:new Date(Date.now()-4*60e3).toISOString(), lat:17.4188, lng:78.4441}],
+  usage:{days:7, started:48, arrived:39, switched:11, left_route:14, riders:23, skips_open:1, alert_opens:{card:61, maps:22, waze:5, alerts:131}},
   corrections:[
+    {edge_id:903, osm_way_id:55901, seg:1, kind:"SKIPPED", reports:1, people:4, latest:new Date(Date.now()-3*3600e3).toISOString(), road:"Lane 6, Ramanthapur", width_m:3.5, width_src:"CLASS_DEFAULT", gate_state:"OPEN", lat:17.4010, lng:78.5240,
+     title:"Riders leave the route here", detail:"Noticed on Lane 6, Ramanthapur: riders were sent this way on different days and did not take it", apply:"Look at the place, then say what it is: too narrow, no entry or a closed gate"},
     {edge_id:901, osm_way_id:55501, seg:2, kind:"TOO_NARROW", reports:3, people:3, latest:new Date(Date.now()-35*60e3).toISOString(), road:"Road No 12", width_m:5.5, width_src:"CLASS_DEFAULT", gate_state:"OPEN", lat:17.4188, lng:78.4441,
      title:"Too narrow for a car", detail:"3 riders on Road No 12", apply:"Set the width to 2.0 m, which closes it to a car and anything wider"},
     {edge_id:902, osm_way_id:55777, seg:0, kind:"GATE_CLOSED", reports:1, people:1, latest:new Date(Date.now()-6*60e3).toISOString(), road:"Kavuri Hills Phase 2", width_m:4.5, width_src:"CLASS_DEFAULT", gate_state:"UNKNOWN", lat:17.4380, lng:78.4010,
@@ -378,7 +383,7 @@ document.querySelectorAll(".tab").forEach(tab => tab.onclick = () => {
   setPick(null);
   if (map) map.getCanvas().style.cursor = tab.id === "t-roads" ? "crosshair" : "";
   if (tab.id === "t-review") loadReview();
-  if (tab.id === "t-feeds") { loadChannels().then(loadCifs); loadSources(); }
+  if (tab.id === "t-feeds") { loadUsage(); loadChannels().then(loadCifs); loadSources(); }
 });
 const activeTab = () => document.querySelector('.tab[aria-selected="true"]').id;
 
@@ -685,18 +690,20 @@ async function loadCorrections(){
   let rows; try { rows = live ? (await api("/v1/corrections")).corrections : DEMO.corrections; } catch { return; }
   corrCount = rows.length; showCount();
   $("corrlist").innerHTML = rows.length ? rows.map(r => `<div class="road" data-way="${r.osm_way_id}" data-seg="${r.seg}" data-kind="${r.kind}" data-ll="${r.lng},${r.lat}">
-      <div class="feed-head"><h3>${esc(r.title)}</h3><span class="pill ${r.people > 1 ? "warn" : ""}">${r.people > 1 ? `${r.people} riders agree` : "1 rider"}</span></div>
+      <div class="feed-head"><h3>${esc(r.title)}</h3><span class="pill ${r.people > 1 ? "warn" : ""}">${r.kind === "SKIPPED" ? `${r.people} riders left here` : r.people > 1 ? `${r.people} riders agree` : "1 rider"}</span></div>
       <p class="hint" style="margin:2px 0 0">${esc(r.detail)}, latest ${ago(r.latest)}</p>
       <p class="hint" style="margin:2px 0 0">On the map now: ${r.kind === "GATE_CLOSED" ? `gate ${r.gate_state === "OPEN" ? "open" : r.gate_state === "UNKNOWN" ? "state unknown" : "closed"}` : `${(+r.width_m).toFixed(1)} m wide${r.width_src === "CLASS_DEFAULT" || r.width_src === "LANES_INFER" ? ", an estimate" : ""}`}</p>
       <p style="margin:6px 0 0">${esc(r.apply)}.</p>
-      <div class="actions" style="margin-top:8px"><button class="btn small go" data-corr="apply">Apply</button><button class="btn small" data-corr="dismiss">Dismiss</button><button class="btn small" data-corr="show">Show on map</button></div></div>`).join("")
+      <div class="actions" style="margin-top:8px">${r.kind === "SKIPPED"
+        ? `<button class="btn small" data-corr="apply" data-as="TOO_NARROW">Too narrow</button><button class="btn small" data-corr="apply" data-as="NO_ENTRY">No entry</button><button class="btn small" data-corr="apply" data-as="GATE_CLOSED">Gate closed</button>`
+        : `<button class="btn small go" data-corr="apply">Apply</button>`}<button class="btn small" data-corr="dismiss">${r.kind === "SKIPPED" ? "Nothing wrong" : "Dismiss"}</button><button class="btn small" data-corr="show">Show on map</button></div></div>`).join("")
     : `<p class="empty">No corrections waiting.</p>`;
 }
 $("corrlist").onclick = async e => {
   const b = e.target.closest("[data-corr]"), card = e.target.closest("[data-way]"); if (!b || !card) return;
   if (b.dataset.corr === "show") { const [lng, lat] = card.dataset.ll.split(",").map(Number); if (map) map.flyTo({center:[lng, lat], zoom:16.5}); return; }
   if (!needAdmin()) return;
-  try { const d = await api("/v1/corrections", {method:"POST", headers:adminHeaders(), body:JSON.stringify({osm_way_id:+card.dataset.way, seg:+card.dataset.seg, kind:card.dataset.kind, action:b.dataset.corr})});
+  try { const d = await api("/v1/corrections", {method:"POST", headers:adminHeaders(), body:JSON.stringify({osm_way_id:+card.dataset.way, seg:+card.dataset.seg, kind:card.dataset.kind, action:b.dataset.corr, decide_as:b.dataset.as || null})});
         toast(b.dataset.corr === "apply" ? `Applied. ${nIN(d.edges_changed)} road ${d.edges_changed === 1 ? "stretch" : "stretches"} changed; routes now follow it.` : "Dismissed.");
         loadCorrections(); }
   catch (err) { toast(err.message, true); }
@@ -758,6 +765,16 @@ async function loadChannels(){
     `<p class="hint">${nIN(d.links.opened)} of ${nIN(d.links.alerts_sent)} alerts in the last 24 hours were opened in Google Maps${d.links.short_links ? "" : " (opens are counted only when PUBLIC_BASE_URL is set)"}.</p>`;
 }
 
+async function loadUsage(){
+  let u; try { u = live ? await api("/v1/usage?days=7") : DEMO.usage; } catch { return; }
+  const pct = (a, b) => b ? `${Math.round(100 * a / b)}%` : "none yet", o = u.alert_opens, opened = o.card + o.maps + o.waze;
+  $("usage").innerHTML = `<div class="road"><div class="feed-head"><h3>Last ${u.days} days</h3><span class="pill">${nIN(u.riders)} riders sharing</span></div>
+    <p class="hint" style="margin:4px 0 0"><strong>${nIN(u.started)}</strong> trips started on the live route, <strong>${pct(u.arrived, u.started)}</strong> finished on it</p>
+    <p class="hint" style="margin:2px 0 0">${nIN(u.switched)} switched route on the way, ${nIN(u.left_route)} left the route at least once</p>
+    <p class="hint" style="margin:2px 0 0">Alert links opened: live route ${pct(o.card, opened)}, Google Maps ${pct(o.maps, opened)}, Waze ${pct(o.waze, opened)} (${nIN(opened)} of ${nIN(o.alerts)} alerts opened)</p>
+    ${u.skips_open ? `<p class="hint" style="margin:4px 0 0">${nIN(u.skips_open)} place${u.skips_open === 1 ? "" : "s"} where riders keep leaving the route, waiting in Review.</p>` : ""}
+    <p class="hint" style="margin:4px 0 0">Counted only for riders who agreed to share trip events on the live route page.</p></div>`;
+}
 async function loadCifs(){
   let f; try { f = live ? await api("/v1/feeds/cifs/preview") : DEMO.cifs; } catch { return; }
   const box = $("cifs"); if (!box) return;

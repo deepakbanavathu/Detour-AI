@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timezone
 
 from . import pipeline, zones
+from . import usage
 from .channels import fanout
 from .config import CITY_ID
 from .db import close_pool, conn, open_pool
@@ -21,6 +22,7 @@ from .ingest.text import advisory_sentences, relevant
 log = logging.getLogger("detour.worker")
 TICK_S = 15
 EXPIRE_EVERY_S = 300
+SKIPS_EVERY_S = 900
 
 
 def _bbox(c, city_id: int) -> tuple[float, float, float, float]:
@@ -144,6 +146,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     open_pool()
     last_expire = 0.0
+    last_skips = 0.0
     try:
         while True:
             with conn() as c:
@@ -151,6 +154,15 @@ def main() -> None:
                 if time.monotonic() - last_expire > EXPIRE_EVERY_S:
                     log.info("expiry pass: %s", zones.expire(c))
                     last_expire = time.monotonic()
+                if time.monotonic() - last_skips > SKIPS_EVERY_S:
+                    try:
+                        found = usage.detect_skips(c)           # several riders leaving the route at the same stretch
+                        if found:
+                            log.info("skipped stretches: %s new corrections", found)
+                    except Exception:
+                        c.rollback()
+                        log.exception("skip detection failed")
+                    last_skips = time.monotonic()
                 try:
                     sent = fanout.tick(c)                       # new zones out, cleared notices, SMS fallbacks
                     if any(sent.values()):

@@ -181,7 +181,7 @@ def test_card_crawl_rule_stays_quiet_when_moving_or_past_the_turn_off(open_page)
 def test_review_tab_shows_count_reasons_and_candidates(open_page):
     p = open_page("console.html")
     p.wait_for_selector(".plate")
-    assert p.inner_text("#review-count") == "5" and p.is_visible("#review-count")          # 3 unplaced advisories + 2 road corrections
+    assert p.inner_text("#review-count") == "6" and p.is_visible("#review-count")          # 3 unplaced advisories + 3 road corrections
     p.click("#t-review")
     p.wait_for_selector("#reviewlist .road")
     cards = p.locator("#reviewlist .road")
@@ -244,7 +244,7 @@ def test_feed_form_validates_before_asking_for_admin(open_page):
 def test_five_tabs_fit_the_panel_and_switch(open_page):
     p = open_page("console.html")
     p.wait_for_selector(".plate")
-    assert p.locator(".tab").all_inner_texts() == ["Routes", "Advisories", "Review5", "Roads", "Feeds"]
+    assert p.locator(".tab").all_inner_texts() == ["Routes", "Advisories", "Review6", "Roads", "Feeds"]
     assert p.evaluate("document.querySelector('.tabs').scrollWidth <= document.querySelector('.tabs').clientWidth")
     for tab, pane in (("#t-feeds", "#p-feeds"), ("#t-review", "#p-review"), ("#t-routes", "#p-routes")):
         p.click(tab)
@@ -491,12 +491,73 @@ def test_console_lists_rider_corrections_with_what_apply_will_do(open_page):
     p.wait_for_selector(".plate")
     p.click("#t-review")
     p.wait_for_selector("#corrlist .road")
-    cards = p.locator("#corrlist .road")
+    cards = p.locator('#corrlist .road:not([data-kind="SKIPPED"])')
     assert cards.count() == 2
     first = cards.nth(0).inner_text()
     assert "Too narrow for a car" in first and "3 riders agree" in first and "5.5 m wide, an estimate" in first
     assert "Set the width to 2.0 m" in first
     assert "gate state unknown" in cards.nth(1).inner_text() and "1 rider" in cards.nth(1).inner_text()
     cards.nth(0).locator('[data-corr="apply"]').click()
+    p.wait_for_selector("#toast:not([hidden])")
+    assert "Preview data cannot be changed" in p.inner_text("#toast")
+
+
+# ---------------------------------------------------------------- trip events, with the rider's agreement
+
+def test_sharing_is_asked_once_before_the_first_trip_and_can_be_turned_off(open_page):
+    p = open_page("card.html", query="?share=1", width=390, height=800)
+    p.wait_for_selector(".rt")
+    assert p.is_hidden("#share")
+    p.click("#go")
+    p.wait_for_selector("#share:not([hidden])")
+    text = p.inner_text("#share")
+    assert "never your track" in text and "fixed for everyone" in text
+    assert p.evaluate("started()") is False, "nothing starts before the rider answers"
+    p.click("#share-yes")
+    p.wait_for_function("started()")
+    assert p.is_hidden("#share") and p.inner_text("#share-line").startswith("Sharing trip events: on.")
+    assert p.evaluate("eventQueue.map(e => e.kind)") == ["START"]
+    p.evaluate("clearInterval(simTimer)")
+    p.click('.rt[data-r="B"]')
+    p.evaluate("onPosition(78.3935, 17.4469); onPosition(78.4300, 17.4600); offSince = Date.now() - 20000; lastOn = [78.3935, 17.4469]; onPosition(78.4301, 17.4601)")
+    q = p.evaluate("eventQueue")
+    assert [e["kind"] for e in q] == ["START", "SWITCH", "OFF_ROUTE"] and q[1]["route"] == "B"
+    assert (q[2]["lat"], q[2]["lng"]) == (17.4469, 78.3935), "a departure carries only the last point on the route"
+    assert all(set(e) <= {"kind", "route", "at", "lat", "lng"} for e in q)
+    p.click("#share-toggle")
+    assert p.inner_text("#share-line").startswith("Sharing trip events: off.") and p.evaluate("eventQueue.length") == 0
+    p.evaluate("logEvent('ARRIVE')")
+    assert p.evaluate("eventQueue.length") == 0, "nothing is recorded once turned off"
+
+
+def test_declining_to_share_still_starts_the_trip_and_records_nothing(open_page):
+    p = open_page("card.html", query="?share=1", width=390, height=800)
+    p.wait_for_selector(".rt")
+    p.click("#go")
+    p.wait_for_selector("#share:not([hidden])")
+    p.click("#share-no")
+    p.wait_for_function("started()")
+    assert p.evaluate("eventQueue.length") == 0 and p.inner_text("#share-line").startswith("Sharing trip events: off.")
+    p.click("#go")                                                       # stop, and start again: not asked twice
+    p.click("#go")
+    p.wait_for_function("started()")
+    assert p.is_hidden("#share")
+
+
+def test_console_usage_card_and_deciding_a_skipped_stretch(open_page):
+    p = open_page("console.html")
+    p.wait_for_selector(".plate")
+    p.click("#t-feeds")
+    p.wait_for_selector("#usage .road")
+    u = p.inner_text("#usage")
+    assert "48 trips started on the live route, 81% finished on it" in u
+    assert "live route 69%, Google Maps 25%, Waze 6% (88 of 131 alerts opened)" in u
+    assert "Counted only for riders who agreed" in u
+    p.click("#t-review")
+    p.wait_for_selector("#corrlist .road")
+    skipped = p.locator('#corrlist .road[data-kind="SKIPPED"]')
+    assert skipped.count() == 1 and "4 riders left here" in skipped.inner_text()
+    assert skipped.locator("[data-corr]").all_inner_texts() == ["Too narrow", "No entry", "Gate closed", "Nothing wrong", "Show on map"]
+    skipped.locator('[data-as="NO_ENTRY"]').click()
     p.wait_for_selector("#toast:not([hidden])")
     assert "Preview data cannot be changed" in p.inner_text("#toast")

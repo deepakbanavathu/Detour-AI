@@ -5,7 +5,7 @@ graph, and gives each vehicle class a proper re-route: a scooter and a car do no
 detour. Backend-first; commuters get alerts over WhatsApp with a Google Maps handoff, fleets get
 an API/SDK. Design, plan and legal review live in the project doc; this repo is the build.
 
-## What works today (v0.15)
+## What works today (v0.16)
 
 | Piece | Where | Status |
 | --- | --- | --- |
@@ -127,6 +127,22 @@ alerts keep the Google Maps button. The product and UX reasoning is in the proje
 
 The reasoning and the comparison with Grab's and Amap's maps are in the project doc's "Roadmap and lessons from other maps".
 
+## Learning from where riders go
+
+- **Asked once, on the phone.** The first time someone presses Start on a live route, the page asks whether it may
+  tell DetourAI when they start, change route, leave the route and arrive. "No thanks" still starts the trip. The
+  answer is kept on that phone and can be turned off from a line at the bottom of the page.
+- **No track is kept.** A departure sends only the last point on the route. The server works out which stretch of the
+  route came next: the one the rider chose not to take. Events from a phone that was offline are sent later.
+- **Skipped roads are noticed without anyone reporting.** When at least three riders on at least two different days
+  leave their route at the same stretch, the worker opens a correction, "Riders leave the route here", in the Review
+  tab. A rider who answered "my choice" there is not counted. The operator looks at the place and decides: too
+  narrow, no entry, gate closed, or nothing wrong. A decision is not reopened for 14 days. The thresholds are estimates
+  (`usage.SKIP_RIDERS`, `SKIP_DAYS`), to tune on real departures.
+- **Usage for the product owner** (`/v1/usage`, the Feeds tab): trips started and finished on the live route, switches,
+  departures, and which app alert links were opened in.
+- DELETE in chat removes the rider's events with everything else.
+
 ## The map
 
 - **Search as you type.** From the second letter the From and To boxes suggest places: names that start with what
@@ -211,11 +227,11 @@ in `verify/criteria.json`; the full guide, including what to collect and how to 
 
 | Command | What it runs |
 | --- | --- |
-| `make test` | 179 unit tests: advisory parser, normalization, Maps and Waze handoff, brief, packs, routing SQL, feed parsers, onboarding and report conversation, channel adapters, CIFS feed, trust and votes |
+| `make test` | 183 unit tests: advisory parser, normalization, Maps and Waze handoff, brief, packs, routing SQL, feed parsers, onboarding and report conversation, channel adapters, CIFS feed, trust and votes |
 | `make test-sql` | every SQL file and embedded statement through PostgreSQL's parser |
-| `make test-ui` | 39 browser tests of the console (routes, advisories, review, roads, feeds), brief and route card on preview data |
+| `make test-ui` | 42 browser tests of the console (routes, advisories, review, roads, feeds), brief and route card on preview data |
 | `make test-live` | 22 end-to-end tests against the running stack (skipped when it is down) |
-| `DETOUR_DB=... python -m pytest -m db tests/integration` | reports, answers, trust, the feed, a subscriber's trip, alert and ROUTE links, and rider corrections against the database; creates and removes its own rows |
+| `DETOUR_DB=... python -m pytest -m db tests/integration` | reports, answers, trust, the feed, a subscriber's trip, alert and ROUTE links, rider corrections, and trip events and skipped stretches against the database; creates and removes its own rows |
 
 `pip install -r requirements-dev.txt` and `python -m playwright install chromium` set up the tools. GitHub Actions
 runs the first three on every push (`.github/workflows/tests.yml`). The scenario catalogue, with manual checks for

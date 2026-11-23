@@ -272,6 +272,17 @@ def test_corrections_list_and_apply_need_the_right_access(api, anon):
     assert anon.get(f"/v1/trips/{unknown}/reroute", params={"lat": 17.4, "lng": 78.4}).status_code == 404
 
 
+def test_trip_events_and_usage_endpoints(api, anon):
+    unknown = "0123456789abcdef0123456789abcdef"
+    assert anon.post(f"/v1/trips/{unknown}/events", json={"events": []}).status_code == 404
+    assert anon.post(f"/v1/trips/{unknown}/events", json={"events": [{}] * 21}).status_code == 422      # one batch at most
+    assert anon.get("/v1/usage").status_code == 401
+    u = api.get("/v1/usage", params={"days": 7}).json()
+    assert {"started", "arrived", "switched", "left_route", "riders", "skips_open", "alert_opens"} <= set(u)
+    bad = {"osm_way_id": 1, "seg": 0, "kind": "SKIPPED", "action": "apply"}
+    assert api.post("/v1/corrections", json=bad).json() == {"closed": 0, "edges_changed": 0} or api.post("/v1/corrections", json=bad).status_code == 400
+
+
 def test_pages_are_served(api):
     for path in ("/console", "/brief", "/card/1", "/sw.js"):
         r = api.get(path)

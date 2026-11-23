@@ -9,7 +9,7 @@ ALTER TABLE net.edge_dim ADD CONSTRAINT edge_dim_width_src_check
 CREATE TABLE IF NOT EXISTS client.route_feedback (
   fb_id      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   sub_id     BIGINT REFERENCES client.subscriber ON DELETE SET NULL,
-  kind       TEXT NOT NULL CHECK (kind IN ('BLOCKED','GATE_CLOSED','TOO_NARROW','NO_ENTRY','CHOICE')),
+  kind       TEXT NOT NULL,                              -- allowed values are set in migration 018, so re-applying this file never narrows them
   profile    TEXT NOT NULL,                              -- the vehicle the person was on: 2W or 4W_HATCH
   geom       GEOMETRY(Point, 4326) NOT NULL,
   edge_id    BIGINT,                                     -- the road stretch it was matched to (ids change on re-import)

@@ -9,6 +9,7 @@ from __future__ import annotations
 from .config import CITY_ID
 
 KINDS = ("BLOCKED", "GATE_CLOSED", "TOO_NARROW", "NO_ENTRY", "CHOICE")
+DECIDE_AS = ("TOO_NARROW", "NO_ENTRY", "GATE_CLOSED")      # what an operator may decide a skipped stretch was
 PER_DAY = 10
 SNAP_M = 40.0
 VEHICLE_WORDS = {"2W": "a two-wheeler", "4W_HATCH": "a car"}
@@ -33,6 +34,9 @@ def describe(kind: str, profiles: list[str], road: str | None, people: int) -> d
         return {"title": f"No entry for {v}", "detail": f"{who} on {where}", "apply": f"Close this stretch to {v}"}
     if kind == "GATE_CLOSED":
         return {"title": "Gate closed", "detail": f"{who} on {where}", "apply": "Mark the gate closed until someone reports it open"}
+    if kind == "SKIPPED":
+        return {"title": "Riders leave the route here", "detail": f"Noticed on {where}: riders were sent this way on different days and did not take it",
+                "apply": "Look at the place, then say what it is: too narrow, no entry or a closed gate"}
     return {"title": "Road blocked", "detail": f"{who} on {where}", "apply": "Handled as a road report; nothing to apply here"}
 
 
@@ -73,21 +77,32 @@ def open_corrections(c, city_id: int = CITY_ID) -> list[dict]:
         FROM client.route_feedback f
         JOIN net.edge e ON e.osm_way_id = f.osm_way_id AND e.seg = f.seg
         JOIN net.edge_dim d ON d.edge_id = e.edge_id JOIN net.edge_dynamic y ON y.edge_id = e.edge_id
-        WHERE f.status = 'OPEN' AND f.kind IN ('GATE_CLOSED','TOO_NARROW','NO_ENTRY')
+        WHERE f.status = 'OPEN' AND f.kind IN ('GATE_CLOSED','TOO_NARROW','NO_ENTRY','SKIPPED')
         GROUP BY f.osm_way_id, f.seg, f.kind, e.edge_id, e.name, d.width_m, d.width_src, y.gate_state, e.geom
         ORDER BY count(DISTINCT COALESCE(f.sub_id, -f.fb_id)) DESC, max(f.created_at) DESC
         LIMIT 100
         """).fetchall()
     out = []
     for r in rows:
+        if r["kind"] == "SKIPPED":                 # found from departures, not from reports: count the riders who left there
+            r = dict(r)
+            r["people"] = c.execute("SELECT count(DISTINCT sub_id) AS n FROM client.trip_event WHERE kind = 'OFF_ROUTE' AND osm_way_id = %s AND seg = %s",
+                                    (r["osm_way_id"], r["seg"])).fetchone()["n"]
         out.append({"edge_id": r["edge_id"], "osm_way_id": r["osm_way_id"], "seg": r["seg"], "kind": r["kind"], "reports": r["reports"], "people": r["people"],
                     "latest": r["latest"], "road": r["name"], "width_m": r["width_m"], "width_src": r["width_src"], "gate_state": r["gate_state"],
                     "lat": r["lat"], "lng": r["lng"], **describe(r["kind"], r["profiles"], r["name"], r["people"])})
     return out
 
 
-def close(c, osm_way_id: int, seg: int, kind: str, action: str, by: str = "console") -> dict:
-    """Apply or dismiss every open report of one kind on one stretch."""
+def close(c, osm_way_id: int, seg: int, kind: str, action: str, by: str = "console", decide_as: str | None = None) -> dict:
+    """Apply or dismiss every open report of one kind on one stretch. A skipped stretch is applied as what the
+    operator decided it was (decide_as)."""
+    if kind == "SKIPPED" and action == "apply":
+        if decide_as not in DECIDE_AS:
+            raise ValueError("say what the skipped stretch is: TOO_NARROW, NO_ENTRY or GATE_CLOSED")
+        c.execute("UPDATE client.route_feedback SET kind = %s WHERE osm_way_id = %s AND seg = %s AND kind = 'SKIPPED' AND status = 'OPEN'",
+                  (decide_as, osm_way_id, seg))
+        kind = decide_as
     rows = c.execute(
         "UPDATE client.route_feedback SET status = %s, closed_at = now(), closed_by = %s WHERE osm_way_id = %s AND seg = %s AND kind = %s AND status = 'OPEN' RETURNING profile",
         ("APPLIED" if action == "apply" else "DISMISSED", by, osm_way_id, seg, kind)).fetchall()
