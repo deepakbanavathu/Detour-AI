@@ -63,6 +63,8 @@ services:
       DATABASE_URL: postgresql://detour:${DB_PASSWORD:-detour}@db:5432/detour
       KAFKA_BOOTSTRAP: redpanda:9092
       ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me}
+      CONSOLE_PASSWORD: ${CONSOLE_PASSWORD:-}
+      REQUIRE_LOGIN: ${REQUIRE_LOGIN:-1}
       CITY_ID: "1"
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_MODEL: ${LLM_MODEL:-qwen2.5-7b-instruct-q4}

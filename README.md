@@ -5,7 +5,7 @@ graph, and gives each vehicle class a proper re-route: a scooter and a car do no
 detour. Backend-first; commuters get alerts over WhatsApp with a Google Maps handoff, fleets get
 an API/SDK. Design, plan and legal review live in the project doc; this repo is the build.
 
-## What works today (v0.11)
+## What works today (v0.15)
 
 | Piece | Where | Status |
 | --- | --- | --- |
@@ -95,6 +95,71 @@ message when it ends. A WhatsApp alert with no delivery receipt after 60 seconds
 Setup, including the two template texts to submit to Meta, is in `docs/CHANNEL_SETUP.md`. With nothing configured
 the code runs and sends nothing; the console's Feeds tab shows each channel's state and its next step.
 
+## The live route page (staying in DetourAI)
+
+Every subscriber trip has its own page at `/go/<token>`: the same route card as team routes, built for that person's
+start, end and vehicle. Alerts open it first ("Open live route"); Google Maps and Waze follow as short links. The page
+
+- says in one sentence why today differs and what Route A costs, then offers one action, **Start route A**;
+- guides from the phone's GPS with the next turn, distance, voice and arrival time, the map following and turning;
+- asks the server each minute which of the stored routes is best and offers the switch before the turn-off;
+- takes a report in two taps (**Report**, then water, closed road or accident) pinned at the phone's position;
+- asks "still blocked?" once when the person passes a zone, and counts the answer only if their corridor passes it;
+- keeps working without data once opened, and can be added to the home screen to open full-screen.
+
+The token is 32 random hex characters and is the only key: trips cannot be listed or guessed, and DELETE in chat
+ends the link. **ROUTE** in chat sends a subscriber their links. All of this needs `PUBLIC_BASE_URL`; without it
+alerts keep the Google Maps button. The product and UX reasoning is in the project doc's "In-app experience review".
+
+## Riders correct the route
+
+- **Leaving the route asks why.** Twelve seconds off the route, the live route page shows four choices: road blocked,
+  gate closed, too narrow, my choice. One tap sends it and fetches a new route from where the person is, steering
+  clear of that stretch (`/v1/trips/<token>/reroute`).
+- **The Report sheet has the same corrections** for a problem seen without leaving the route, plus "no entry here".
+- **One report changes only that person's route.** Matching reports are grouped in the console's Review tab as a
+  correction: how many riders agree, what the map says now, and exactly what Apply will do.
+- **Apply changes the map for everyone and is kept.** "Too narrow for a car" sets the width to 2.0 m (cars out,
+  scooters in); "no entry" closes the stretch to that vehicle; a closed gate is marked closed. Width and no-entry
+  corrections are stored in `net.correction` by OpenStreetMap way and segment and put back by every import and by
+  `net.apply_corrections()`.
+- **Reports ahead are spoken** on the live route: "Water on the road reported 400 m ahead, not yet confirmed."
+
+The reasoning and the comparison with Grab's and Amap's maps are in the project doc's "Roadmap and lessons from other maps".
+
+## The map
+
+- **Search as you type.** From the second letter the From and To boxes suggest places: names that start with what
+  you typed, then names with a word that starts with it, then names that contain it, then near-misspellings. When the
+  city's own gazetteer has fewer than three matches, an OpenStreetMap search (Photon) fills in, limited to the city.
+  `GEOCODER_URL=` (empty) switches that off. When nothing matches, the list says so.
+- **A full-colour basemap** (OpenFreeMap's liberty style) on the console and the route card.
+- **Reports from the road** appear as red-bordered caution triangles with a pictogram for water, a closed road or an
+  accident; an unconfirmed one pulses until someone confirms it (the pulse stops for people who ask for reduced motion).
+- **Each zone carries a diversion plate** saying what it is and until when.
+- **Waze live** (top right) opens a separate page with Waze's own Live Map beside the list of DetourAI zones. Press
+  *Seen on Waze now* or *Seen in Maps now* when the same closure appears there; *Download timing sheet* writes the
+  `lead_time.csv` that `verify.bat lead` scores. Waze's map is shown unchanged; its rules forbid using its icons or
+  look on another map, so the DetourAI map keeps its own road-sign design.
+
+## Signing in
+
+Open `http://127.0.0.1:8080/console`; it sends you to the sign-in page. The password is `ADMIN_TOKEN` from `.env`
+(or `CONSOLE_PASSWORD` if you set one). A session lasts 12 hours and carries admin rights, so the console no longer
+asks for a token. Five wrong tries lock that address out for five minutes. Without a session or the `X-Admin-Token`
+header, the pages redirect to sign-in and the data endpoints answer 401; scripts, tests and `verify.bat` use the
+header. The route card, short links, webhooks and the closure feed stay open by design. `REQUIRE_LOGIN=0` turns
+sign-in off for a machine nobody else can reach.
+
+## Response time
+
+- A route is remembered until something it depends on changes. A counter in the database (`net.dyn_epoch`) moves on
+  every change to zone penalties, gate states, water depth, widths or the network; the cache key includes it, so a
+  repeat request is answered from memory and never from stale data. `/healthz` reports hits and misses.
+- `/v1/route/compare` routes the vehicles side by side, each on its own connection.
+- Responses are compressed; the two big table counts in `/healthz` are refreshed every five minutes.
+- The connection pool holds 20 connections and each statement is limited to 60 seconds.
+
 ## What is public and what is not
 
 - **Saving a zone is an admin action.** `POST /v1/advisories/paste` is a dry run unless it carries the admin token;
@@ -119,6 +184,8 @@ the code runs and sends nothing; the console's Feeds tab shows each channel's st
 - **Closure feed** at `/v1/feeds/cifs.json` and `.xml`, in Waze's CIFS format, for a traffic authority to register
   under Waze for Cities so the closures reach Waze and Google Maps. See `docs/WAZE_FEED.md`.
 - **Open in Waze** beside the Google Maps link. Waze takes the destination only and picks its own route.
+  In alerts both links go through `/r/<token>`, which redirects only to Google Maps directions or to Waze's
+  navigation address, expires with the alert, and records which app the person opened.
 
 ## Route packs and the offline card
 
@@ -144,11 +211,11 @@ in `verify/criteria.json`; the full guide, including what to collect and how to 
 
 | Command | What it runs |
 | --- | --- |
-| `make test` | 161 unit tests: advisory parser, normalization, Maps and Waze handoff, brief, packs, routing SQL, feed parsers, onboarding and report conversation, channel adapters, CIFS feed, trust and votes |
+| `make test` | 179 unit tests: advisory parser, normalization, Maps and Waze handoff, brief, packs, routing SQL, feed parsers, onboarding and report conversation, channel adapters, CIFS feed, trust and votes |
 | `make test-sql` | every SQL file and embedded statement through PostgreSQL's parser |
-| `make test-ui` | 25 browser tests of the console (routes, advisories, review, roads, feeds), brief and route card on preview data |
-| `make test-live` | 18 end-to-end tests against the running stack (skipped when it is down) |
-| `DETOUR_DB=... python -m pytest -m db tests/integration` | reports, answers, trust and the feed against the database; creates and removes its own rows |
+| `make test-ui` | 39 browser tests of the console (routes, advisories, review, roads, feeds), brief and route card on preview data |
+| `make test-live` | 22 end-to-end tests against the running stack (skipped when it is down) |
+| `DETOUR_DB=... python -m pytest -m db tests/integration` | reports, answers, trust, the feed, a subscriber's trip, alert and ROUTE links, and rider corrections against the database; creates and removes its own rows |
 
 `pip install -r requirements-dev.txt` and `python -m playwright install chromium` set up the tools. GitHub Actions
 runs the first three on every push (`.github/workflows/tests.yml`). The scenario catalogue, with manual checks for

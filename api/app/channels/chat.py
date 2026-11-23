@@ -17,7 +17,7 @@ NOTICE = (
     "It does not track where you are. If you send a REPORT, the pin you share for it is kept with the report.\n\n"
     "Reply STOP to end, DELETE to erase everything, SHOW to see what is kept. You must be 18 or older.\n\n"
     "Set up alerts from DetourAI on this chat?")
-HELP = ("Send REPORT to pin water, a closed road or an accident for others. SHOW shows what is kept, STOP pauses alerts, "
+HELP = ("Send ROUTE for your live route page. REPORT pins water, a closed road or an accident for others. SHOW shows what is kept, STOP pauses alerts, "
         "START resumes, RESET changes your route, DELETE erases everything.")
 
 
@@ -121,6 +121,11 @@ def step(state: dict | None, msg: dict) -> tuple[dict, list[dict], list[dict]]:
             return s, [ASK_REPORT_PIN], []
         s["data"].pop("report", None)                           # STOP or DELETE in the middle of a report: fall through
         s["step"] = back
+    if w in ("ROUTE", "ROUTES", "MAP", "OPEN"):
+        if s["step"] != "DONE":
+            return s, [text("Your live route page is ready once your route is set up. " + ("Send START to turn alerts back on." if s["step"] == "STOPPED" else "Say hi to begin."
+                                                                                                if s["step"] in ("NEW", "CONSENT") else "You are a few answers away."))], []
+        return s, [], [{"do": "links"}]                           # the store writes the reply: it knows the links
     if w == "REPORT":
         if s["step"] != "DONE":
             return s, [text("Finish setting up your route first, then you can report. " + ("Send START to turn alerts back on." if s["step"] == "STOPPED" else "Say hi to begin."
@@ -195,7 +200,7 @@ def step(state: dict | None, msg: dict) -> tuple[dict, list[dict], list[dict]]:
         s["data"]["windows"] = win
         s["step"] = "DONE"
         done = text("You are set. I will message you only when a closure or flooding touches your route during your travel times, "
-                    "with a link that opens the way round in Google Maps. " + HELP)
+                    "with a link that opens the way round. " + HELP)
         return s, [done], [{"do": "subscribe", "profile": s["data"]["profile"], "windows": WINDOWS[win]}]
 
     # DONE: anything else gets the short help

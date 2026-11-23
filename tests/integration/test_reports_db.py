@@ -4,32 +4,12 @@ Runs only when DETOUR_DB points at a database with a road network imported:
   DETOUR_DB=postgresql://detour:detour@127.0.0.1:5432/detour python -m pytest -m db tests/integration/test_reports_db.py
 It creates three throwaway Telegram subscribers and removes everything it made.
 """
-import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 pytestmark = pytest.mark.db
-URL = os.environ.get("DETOUR_DB")
-
-
-@pytest.fixture(scope="module")
-def db():
-    if not URL:
-        pytest.skip("DETOUR_DB not set")
-    from psycopg.rows import dict_row
-    from psycopg_pool import ConnectionPool
-
-    import app.db as d
-    from app import profiles
-    d.pool = ConnectionPool(conninfo=URL, min_size=1, max_size=4, open=True, kwargs={"row_factory": dict_row}, configure=d._configure)
-    profiles.load()
-    with d.conn() as c:
-        if not c.execute("SELECT count(*) AS n FROM net.edge").fetchone()["n"]:
-            pytest.skip("no road network imported")
-        yield c
-    d.pool.close()
 
 
 def _state(c, zone_id):

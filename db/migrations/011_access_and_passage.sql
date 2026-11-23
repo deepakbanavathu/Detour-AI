@@ -46,4 +46,8 @@ BEGIN
   END IF;
   UPDATE net.edge_dim d SET static_mask = net.static_mask(e.oneway, d.width_m, d.clearance_m, d.max_gvw_t, d.layout_private) & d.access_mask
   FROM net.edge e WHERE d.edge_id = e.edge_id;
+  -- this recompute starts again from the OSM tags; corrections an operator accepted (migration 017) go back on top
+  IF to_regproc('net.apply_corrections') IS NOT NULL THEN
+    PERFORM net.apply_corrections();
+  END IF;
 END $$;

@@ -16,7 +16,7 @@ WINDOW_24H = timedelta(hours=23, minutes=30)
 
 _MATCH = """
 SELECT DISTINCT ON (s.sub_id) s.sub_id, s.channel, pgp_sym_decrypt(s.channel_id_enc, %(key)s) AS chan_id, s.profile, s.last_inbound_at,
-       c.corr_id, c.label, pgp_sym_decrypt(c.origin_enc, %(key)s) AS o, pgp_sym_decrypt(c.dest_enc, %(key)s) AS d
+       c.corr_id, c.label, c.token AS trip_token, pgp_sym_decrypt(c.origin_enc, %(key)s) AS o, pgp_sym_decrypt(c.dest_enc, %(key)s) AS d
 FROM geo.zone_of_avoidance z
 JOIN client.corridor c ON c.cells_r9 && z.h3_cover_r9
 JOIN client.subscriber s ON s.sub_id = c.sub_id AND s.stopped_at IS NULL
@@ -62,16 +62,23 @@ def _way_round(profile: str, o: tuple[float, float], d: tuple[float, float]) -> 
 
 
 def _send(channel: str, chan_id: str, body: str, link: str, token: str, params: list[str], inside_window: bool,
-          waze: str | None = None) -> tuple[str | None, str | None]:
+          waze: str | None = None, card: str | None = None, card_token: str | None = None) -> tuple[str | None, str | None]:
+    """The first button opens DetourAI's own live route when this server has a public address; Google Maps and Waze
+    follow as choices. Without a public address the Maps link stays the button, as before."""
     if channel == "TELEGRAM":
-        msg = telegram.link_message(chan_id, body, "Open in Google Maps", link)
+        rows = ([[{"text": "Open live route", "url": card}]] if card else []) + [[{"text": "Open in Google Maps", "url": link}]]
         if waze:
-            msg["reply_markup"]["inline_keyboard"].append([{"text": "Open in Waze", "url": waze}])
-        return telegram.send(msg)
+            rows.append([{"text": "Open in Waze", "url": waze}])
+        return telegram.send({"chat_id": chan_id, "text": body[:4096], "disable_web_page_preview": True, "reply_markup": {"inline_keyboard": rows}})
     if inside_window:
-        return whatsapp.send(whatsapp.link_message(chan_id, body, "Open in Google Maps", link))
+        # WhatsApp allows one button; the other apps ride in the text, and only as short links
+        if card:
+            text = body + f"\nPrefer another app? Google Maps: {link}" + (f"  Waze: {waze}" if waze else "")
+            return whatsapp.send(whatsapp.link_message(chan_id, text, "Open live route", card))
+        text = body + (f"\nPrefer Waze? {waze}" if waze and PUBLIC_BASE_URL else "")
+        return whatsapp.send(whatsapp.link_message(chan_id, text, "Open in Google Maps", link))
     if WHATSAPP_ALERT_TEMPLATE and PUBLIC_BASE_URL:
-        return whatsapp.send(whatsapp.template_message(chan_id, WHATSAPP_ALERT_TEMPLATE, params, token))
+        return whatsapp.send(whatsapp.template_message(chan_id, WHATSAPP_ALERT_TEMPLATE, params, card_token or token))
     return None, "outside the 24 hour window and no approved template is configured"
 
 
@@ -90,17 +97,22 @@ def fan_out_zone(c, zone_id: int, now: datetime | None = None) -> dict:
         trip = alerts.trip_label(r["label"])
         body = alerts.alert_text(z["cause"], where, until, via, trip, extra)
         inside = bool(r["last_inbound_at"]) and now - r["last_inbound_at"] < WINDOW_24H
+        waze_token, waze_link = _short_link(c, maps.waze_url(_latlng(r["d"])))
+        card_token = card_link = None
+        if PUBLIC_BASE_URL and r["trip_token"]:
+            card_token, card_link = _short_link(c, f"{PUBLIC_BASE_URL}/go/{r['trip_token']}")
         msg_id, err = _send(r["channel"], r["chan_id"], body, link, token, alerts.template_params(z["cause"], where, until, via, trip), inside,
-                            maps.waze_url(_latlng(r["d"])))
+                            waze_link, card_link, card_token)
         status = "SENT" if msg_id else ("NOT_SENT" if err and ("not configured" in err or "no approved template" in err) else "FAILED")
         due = now + timedelta(seconds=SMS_FALLBACK_AFTER_S) if status == "SENT" and r["channel"] == "WHATSAPP" and sms.configured() else None
         c.execute(
             "INSERT INTO client.outbox (sub_id, channel, kind, zone_id, provider_msg_id, status, detail, sms_text, fallback_due_at) "
             "VALUES (%s, %s, 'ALERT', %s, %s, %s, %s, %s, %s)",
-            (r["sub_id"], r["channel"], zone_id, msg_id, status, err, alerts.sms_text(z["cause"], where, via, link if PUBLIC_BASE_URL else None), due))
+            (r["sub_id"], r["channel"], zone_id, msg_id, status, err, alerts.sms_text(z["cause"], where, via, (card_link or link) if PUBLIC_BASE_URL else None), due))
         if status == "SENT":
-            c.execute("INSERT INTO client.alert_sent (sub_id, zone_id, corr_id, channel, provider_msg_id, token) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
-                      (r["sub_id"], zone_id, r["corr_id"], r["channel"], msg_id, token))
+            c.execute("INSERT INTO client.alert_sent (sub_id, zone_id, corr_id, channel, provider_msg_id, token, waze_token, card_token) "
+                      "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                      (r["sub_id"], zone_id, r["corr_id"], r["channel"], msg_id, token, waze_token, card_token))
             out["sent"] += 1
         else:
             out["not_sent"] += 1

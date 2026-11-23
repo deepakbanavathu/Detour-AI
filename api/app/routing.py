@@ -8,7 +8,11 @@ here; they arrive with GraphHopper.
 from __future__ import annotations
 
 import math
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
+
+import psycopg
 
 from .config import (
     BBOX_PAD_FRACTION,
@@ -127,10 +131,51 @@ def _snap(c, p: Profile, lat: float, lng: float) -> Snap:
     return Snap(int(row["node_id"]), int(row["edge_id"]), float(row["lat"]), float(row["lng"]), float(row["dist_m"]))
 
 
+_CACHE: "OrderedDict[tuple, RouteResult]" = OrderedDict()
+_CACHE_MAX = 1024
+_CACHE_LOCK = threading.Lock()
+CACHE_STATS = {"hits": 0, "misses": 0}
+
+
+def _epoch() -> int | None:
+    """The change counter from net.dyn_epoch, or None on a database that predates it (then nothing is cached)."""
+    try:
+        with conn() as c:
+            row = c.execute("SELECT epoch FROM net.dyn_epoch").fetchone()
+            return int(row["epoch"]) if row else None
+    except psycopg.errors.UndefinedTable:
+        return None
+
+
 def route(p: Profile, origin: tuple[float, float], dest: tuple[float, float], use_zones: bool = True,
-          penalize: list[int] | None = None, penalty: float = 1.0) -> RouteResult:
+          penalize: list[int] | None = None, penalty: float = 1.0, fresh: bool = False) -> RouteResult:
     """use_zones=False gives the usual route, as if no zone were active (the brief compares against it).
-    penalize/penalty steer the search away from given edges (route packs use it to find alternates)."""
+    penalize/penalty steer the search away from given edges (route packs use it to find alternates).
+
+    Results are remembered per change counter: the same request is answered from memory until a zone, gate, depth,
+    width or the network changes, and recomputed after."""
+    ep = None if fresh else _epoch()          # fresh=True always computes (the verifier times the real search with it)
+    if ep is None:
+        return _route(p, origin, dest, use_zones, penalize, penalty)
+    key = (p.code, round(origin[0], 5), round(origin[1], 5), round(dest[0], 5), round(dest[1], 5), use_zones,
+           tuple(penalize or ()), penalty, ep)
+    with _CACHE_LOCK:
+        hit = _CACHE.get(key)
+        if hit is not None:
+            _CACHE.move_to_end(key)
+            CACHE_STATS["hits"] += 1
+            return hit
+    res = _route(p, origin, dest, use_zones, penalize, penalty)          # NoRoute propagates and is not remembered
+    with _CACHE_LOCK:
+        CACHE_STATS["misses"] += 1
+        _CACHE[key] = res
+        while len(_CACHE) > _CACHE_MAX:
+            _CACHE.popitem(last=False)
+    return res
+
+
+def _route(p: Profile, origin: tuple[float, float], dest: tuple[float, float], use_zones: bool = True,
+           penalize: list[int] | None = None, penalty: float = 1.0) -> RouteResult:
     with conn() as c:
         sf = _snap(c, p, *origin)
         st = _snap(c, p, *dest)

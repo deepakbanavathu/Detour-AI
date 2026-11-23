@@ -129,3 +129,36 @@ def candidates(c, text: str, city_id: int = CITY_ID, limit: int = 5) -> list[dic
     q = normalize(text, city_id)
     rows = _collapse(c.execute(_RESOLVE_SQL, {"q": q, "near": None, "beat": None, "city": city_id, "within": None}).fetchall())
     return rows[:limit]
+
+
+# ---------------------------------------------------------------- suggestions while typing
+
+_SUGGEST_SQL = """
+SELECT g.gaz_id, g.canonical, g.feature_class,
+       ST_Y(ST_Centroid(g.geom)) AS clat, ST_X(ST_Centroid(g.geom)) AS clng,
+       min(CASE WHEN a.alias LIKE %(prefix)s THEN 0 WHEN a.alias LIKE %(word)s THEN 1 WHEN a.alias LIKE %(inside)s THEN 2 ELSE 3 END) AS rank,
+       max(similarity(a.alias, %(q)s::text)) AS score
+FROM geo.gazetteer_alias a JOIN geo.gazetteer g USING (gaz_id)
+WHERE g.city_id = %(city)s::smallint AND (a.alias LIKE %(inside)s OR a.alias %% %(q)s::text)
+GROUP BY g.gaz_id
+ORDER BY rank,
+         CASE g.feature_class WHEN 'AREA' THEN 0 WHEN 'JUNCTION' THEN 1 WHEN 'LANDMARK' THEN 1 WHEN 'FLYOVER' THEN 1 WHEN 'UNDERPASS' THEN 1 ELSE 2 END,
+         g.popularity DESC, length(g.canonical), score DESC
+LIMIT 24
+"""
+
+
+def like_escape(q: str) -> str:
+    """Typed text as a literal inside a LIKE pattern."""
+    return q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def suggest(c, text: str, city_id: int = CITY_ID, limit: int = 8) -> list[dict]:
+    """Places for a half-typed name. resolve() wants a whole name (trigram similarity of 0.45 or more), which a few
+    typed letters never reach; this matches the start of a name first, then the start of any word, then anywhere."""
+    q = normalize(text, city_id)
+    if len(q) < 2:
+        return []
+    e = like_escape(q)
+    rows = c.execute(_SUGGEST_SQL, {"q": q, "city": city_id, "prefix": e + "%", "word": "% " + e + "%", "inside": "%" + e + "%"}).fetchall()
+    return _collapse(rows)[:limit]

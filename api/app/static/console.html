@@ -67,6 +67,16 @@ label.f{display:block;font-weight:600;font-size:13px;margin:10px 0 4px}
 .suggest li{padding:6px 8px;border-radius:4px;cursor:pointer;display:flex;justify-content:space-between;gap:10px}
 .suggest li[aria-selected="true"],.suggest li:hover{background:var(--ground)}
 .suggest li small{color:var(--ink-2)}
+.suggest li.none{cursor:default;color:var(--ink-2);background:none}
+/* live objects on the map, drawn in road-sign grammar: a red-bordered caution triangle for a report, a diversion plate for a zone */
+.sign{width:34px;height:31px;position:relative}
+.sign svg{display:block;filter:drop-shadow(0 1px 2px rgba(20,22,24,.45))}
+.sign.pending::after{content:"";position:absolute;left:50%;top:58%;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;border:3px solid var(--divert);animation:ping 1.8s ease-out infinite;pointer-events:none}
+@keyframes ping{0%{transform:scale(.55);opacity:.95}100%{transform:scale(1.45);opacity:0}}
+@media (prefers-reduced-motion: reduce){.sign.pending::after{animation:none;opacity:.85;transform:scale(.9)}}
+.zplate{background:var(--divert);color:var(--divert-ink);font:600 12px/1.25 var(--font);padding:3px 8px;border:2px solid var(--divert-ink);border-radius:3px;white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 3px rgba(20,22,24,.35)}
+.zplate.candidate{background:#fff;color:#2B2F33;border-style:dashed}
+.legend .tri{display:inline-block;width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:14px solid var(--stop);vertical-align:-2px}
 .linkbtn{border:0;background:none;padding:0;margin:8px 0 0 14px;color:var(--inform);font-weight:600;cursor:pointer}
 .linkbtn:hover{text-decoration:underline}
 input[type=text],input[type=password],textarea{width:100%;background:var(--surface);border:1px solid var(--rule);border-radius:var(--r-ctl);padding:8px 10px}
@@ -167,7 +177,7 @@ dialog h2{margin:0 0 6px;font-size:17px}
         <span><b id="n-places">–</b> named places</span>
         <span><b id="n-zones">–</b> active zones</span>
       </div>
-      <div class="gactions"><a class="ghost" href="/brief" target="_blank" rel="noopener">Today’s brief</a><button class="ghost" id="admin-open">Admin access</button></div>
+      <div class="gactions"><a class="ghost" href="/brief" target="_blank" rel="noopener">Today’s brief</a><a class="ghost" id="waze-link" href="/waze" target="_blank" rel="noopener">Waze live</a><button class="ghost" id="admin-open">Admin access</button></div>
     </div>
     <div class="banner" id="preview" hidden>Preview data. The DetourAI API is not reachable from this page; start it with “make up” to see live routes and zones.</div>
   </header>
@@ -213,6 +223,10 @@ dialog h2{margin:0 0 6px;font-size:17px}
       </div>
 
       <div class="pane" id="p-review" role="tabpanel" aria-labelledby="t-review">
+        <h2 style="margin-top:0">Road corrections from riders</h2>
+        <p class="hint" style="margin-top:0">People on a live route said this was wrong where they were. Apply changes the map for everyone and survives the next import.</p>
+        <div id="corrlist" aria-live="polite"></div>
+        <h2>Advisories not yet placed</h2>
         <p class="hint" style="margin-top:0">Advisory sentences DetourAI could not place on the map. Tell it which place was meant and it learns the name and tries again.</p>
         <div id="reviewlist" aria-live="polite"></div>
       </div>
@@ -301,6 +315,7 @@ const DEMO = {
       geometry:{type:"LineString",coordinates:[[78.3908,17.4486],[78.3990,17.4502],[78.4095,17.4489],[78.4190,17.4441],[78.4262,17.4380],[78.4335,17.4322],[78.4398,17.4251],[78.4441,17.4188],[78.4480,17.4126]]}},
   },
   zones:{type:"FeatureCollection",features:[{type:"Feature",properties:{zone_id:12,event_type:"DIVERSION",cause:"WATERLOGGING",status:"ACTIVE",penalty_factor:1,confidence:0.85,corroborations:2,valid_to:new Date(Date.now()+2.4*3600e3).toISOString(),
+      lat:17.4330, lng:78.4170, where:"Jubilee Hills Check Post to Madhapur", until:"9:40 am",
       ir:{anchors:[{text:"Jubilee Hills Check Post",role:"FROM"},{text:"Madhapur",role:"TO"},{text:"Road No 36",role:"VIA"}]}},
     geometry:{type:"Polygon",coordinates:[[[78.4082,17.4372],[78.4125,17.4318],[78.4205,17.4282],[78.4216,17.4296],[78.4140,17.4332],[78.4099,17.4384],[78.4082,17.4372]]]}}]},
   paste:{ok:true, ir:{event_type:"DIVERSION",cause:"WATERLOGGING",vehicle_scope:["ALL"],confidence:0.95,model_ver:"regex-1"},
@@ -328,6 +343,14 @@ const DEMO = {
     {source_id:3, kind:"TOMTOM_INCIDENTS", name:"TomTom traffic incidents", handle:"", cred:0.8, interval_s:1200, enabled:true, state:"ok", last_polled:new Date(Date.now()-11*60e3).toISOString(), last_error:null, items_total:37, zones_total:14},
     {source_id:4, kind:"OPEN_METEO", name:"Open-Meteo rain grid", handle:"", cred:0.6, interval_s:3600, enabled:true, state:"ok", last_polled:new Date(Date.now()-38*60e3).toISOString(), last_error:null, items_total:2376, zones_total:0},
     {source_id:5, kind:"RSS", name:"Deccan Chronicle, Telangana", handle:"https://example.org/wrong", cred:0.75, interval_s:300, enabled:true, state:"failing", last_polled:new Date(Date.now()-4*60e3).toISOString(), last_error:"Client error '404 Not Found' for url 'https://example.org/wrong'", items_total:0, zones_total:0}],
+  reports:[{report_id:1, kind:"WATER", outcome:"PENDING", created_at:new Date(Date.now()-9*60e3).toISOString(), lat:17.4262, lng:78.4380},
+    {report_id:2, kind:"CLOSED", outcome:"CONFIRMED", created_at:new Date(Date.now()-41*60e3).toISOString(), lat:17.4420, lng:78.4010},
+    {report_id:3, kind:"ACCIDENT", outcome:"PENDING", created_at:new Date(Date.now()-4*60e3).toISOString(), lat:17.4188, lng:78.4441}],
+  corrections:[
+    {edge_id:901, osm_way_id:55501, seg:2, kind:"TOO_NARROW", reports:3, people:3, latest:new Date(Date.now()-35*60e3).toISOString(), road:"Road No 12", width_m:5.5, width_src:"CLASS_DEFAULT", gate_state:"OPEN", lat:17.4188, lng:78.4441,
+     title:"Too narrow for a car", detail:"3 riders on Road No 12", apply:"Set the width to 2.0 m, which closes it to a car and anything wider"},
+    {edge_id:902, osm_way_id:55777, seg:0, kind:"GATE_CLOSED", reports:1, people:1, latest:new Date(Date.now()-6*60e3).toISOString(), road:"Kavuri Hills Phase 2", width_m:4.5, width_src:"CLASS_DEFAULT", gate_state:"UNKNOWN", lat:17.4380, lng:78.4010,
+     title:"Gate closed", detail:"1 rider on Kavuri Hills Phase 2", apply:"Mark the gate closed until someone reports it open"}],
   cifs:{incidents:7, closures:3, active_zones:9, min_confidence:0.75, skipped:[{zone_id:14, street:null, why:["no named road within 80 m of the zone"]},{zone_id:19, street:"Road No 12", why:["closure length 22 m is outside 30 m to 20 km"]}]},
   channels:{whatsapp:{configured:true, template:false, webhook_secret:true, active:212, stopped:9, last_24h:{sent:6, delivered:148, read:97, failed:2, fallback_sent:11}},
     telegram:{configured:true, active:34, stopped:1, last_24h:{sent:41}}, sms:{provider:"log", configured:true, last_24h:{sent:11}},
@@ -342,6 +365,7 @@ async function api(path, opts){
   if (!live) throw new Error("preview");
   const r = await fetch(path, opts);
   const body = await r.json().catch(() => ({}));
+  if (r.status === 401 && body.detail === "sign in required") { location.href = "/login?next=/console"; throw new Error("Signing in again"); }
   if (!r.ok) throw new Error(body.detail || `The server answered ${r.status}`);
   return body;
 }
@@ -364,23 +388,31 @@ $("vehicles").onclick = e => { const b = e.target.closest(".chip"); if (b) { b.s
 $("samples").innerHTML = Object.keys(SAMPLES).map(k => `<button class="chip plain" data-k="${k}">${k}</button>`).join("");
 $("samples").onclick = e => { const b = e.target.closest(".chip"); if (b) { $("post").value = SAMPLES[b.dataset.k]; $("reading").innerHTML = ""; } };
 function legend(){ const on = [...document.querySelectorAll("#vehicles .chip[aria-pressed=true]")].map(b => b.dataset.code);
-  $("legend").innerHTML = VEHICLES.filter(v => on.includes(v.code)).map(v => `<span><i style="--c:var(${v.c})"></i>${v.name}</span>`).join("") + `<span><i class="hatch"></i>Zone to avoid</span>`; }
+  $("legend").innerHTML = VEHICLES.filter(v => on.includes(v.code)).map(v => `<span><i style="--c:var(${v.c})"></i>${v.name}</span>`).join("") + `<span><i class="hatch"></i>Zone to avoid</span><span><i class="tri"></i>Report from the road</span>`; }
 legend();
 
 /* ---------- admin ---------- */
 $("admin-open").onclick = () => $("admin").showModal();
 $("admin-cancel").onclick = () => $("admin").close();
 $("admin-save").onclick = () => { token = $("token").value; $("admin").close(); $("admin-open").textContent = token ? "Admin access on" : "Admin access"; };
-const adminHeaders = () => ({"Content-Type":"application/json", "X-Admin-Token": token});
+const adminHeaders = () => (token ? {"Content-Type":"application/json", "X-Admin-Token": token} : {"Content-Type":"application/json"});
 function needAdmin(){ if (!live) { toast("Preview data cannot be changed. Start the API to manage zones and roads.", true); return false; }
+  if (signedIn) return true;                       // a signed-in session carries admin rights
   if (!token) { $("admin").showModal(); return false; } return true; }
+let signedIn = false;
+async function checkSession(){
+  try { const s = await (await fetch("/v1/session")).json(); signedIn = !!s.signed_in;
+        if (signedIn) { $("admin-open").textContent = "Sign out";
+          $("admin-open").onclick = async () => { await fetch("/v1/logout", {method:"POST"}); location.href = "/login"; }; } } catch {}
+}
 
 /* ---------- map ---------- */
 const BLANK = {version:8, sources:{}, layers:[{id:"bg", type:"background", paint:{"background-color":"#E4E7E9"}}]};
 let blank = false;
+// basemap: OpenFreeMap's full-colour style (streets, parks, water), so the live objects sit on a real-looking city
 async function pickStyle(){
   try { const c = new AbortController(); setTimeout(() => c.abort(), 4000);
-        const r = await fetch("https://tiles.openfreemap.org/styles/positron", {signal:c.signal}); if (!r.ok) throw 0; return await r.json(); }
+        const r = await fetch("https://tiles.openfreemap.org/styles/liberty", {signal:c.signal}); if (!r.ok) throw 0; return await r.json(); }
   catch { blank = true; return BLANK; }
 }
 function hatch(alpha){
@@ -419,13 +451,14 @@ async function boot(){
     map.addLayer({id:"routes", type:"line", source:"routes", layout:{"line-cap":"round","line-join":"round"}, paint:{"line-color":["get","color"],"line-width":5}});
     map.addSource("roadhit", {type:"geojson", data:fc([])});
     map.addLayer({id:"roadhit", type:"line", source:"roadhit", paint:{"line-color":"#F2B705","line-width":7,"line-opacity":.9}});
-    try { const h = await fetch("/healthz").then(r => { if (!r.ok) throw 0; return r.json(); }); showHealth(h); }
+    try { const h = await fetch("/healthz").then(r => { if (!r.ok) throw 0; return r.json(); }); showHealth(h); await checkSession(); }
     catch { live = false; $("preview").hidden = false; showHealth(DEMO.health); }
     if (!live && blank) {      // no API and no basemap: sketch a street network so the preview reads as a map
       map.addSource("streets", {type:"geojson", data:fc(DEMO.streets.map(c => ({type:"Feature", geometry:{type:"LineString", coordinates:c}, properties:{}})))});
       map.addLayer({id:"streets", type:"line", source:"streets", layout:{"line-cap":"round","line-join":"round"}, paint:{"line-color":"#fff","line-width":6}}, "zones-fill");
     }
-    setPins(); loadZones(); loadReview();
+    setPins(); loadZones(); loadReports(); loadReview();
+    if (!live) $("waze-link").href = "waze.html";
     if (!live) { drawRoutes(DEMO.compare); }
   });
   map.on("moveend", loadZones);
@@ -442,19 +475,23 @@ $("pick-to").onclick = () => setPick(pick === "to" ? null : "to");
   const input = $(id), list = $("sg-" + id); let timer, items = [], sel = -1;
   const close = () => { list.hidden = true; input.setAttribute("aria-expanded", "false"); sel = -1; };
   const choose = it => { input.value = it.name; input.dataset.ll = `${it.lat.toFixed(5)},${it.lng.toFixed(5)}`; close(); setPins(); };
-  const show = () => { list.innerHTML = items.map((it, i) => `<li role="option" data-i="${i}" aria-selected="${i === sel}"><span>${esc(it.name)}</span><small>${esc(it.kind)}</small></li>`).join("");
-    list.hidden = !items.length; input.setAttribute("aria-expanded", String(items.length > 0)); };
+  let asked = false;
+  const show = () => { list.innerHTML = items.map((it, i) => `<li role="option" data-i="${i}" aria-selected="${i === sel}"><span>${esc(it.name)}</span><small>${esc(it.near ? `${it.kind}, ${it.near}` : it.kind)}</small></li>`).join("")
+      || (asked ? `<li class="none">No place by that name. Use the pin button to pick it on the map.</li>` : "");
+    list.hidden = !items.length && !asked; input.setAttribute("aria-expanded", String(items.length > 0)); };
   input.addEventListener("input", () => {
     delete input.dataset.ll; clearTimeout(timer);
     const q = input.value.trim();
     if (COORD.test(q)) { close(); setPins(); return; }
-    if (q.length < 3) { close(); return; }
+    asked = false;
+    if (q.length < 2) { close(); return; }
     timer = setTimeout(async () => {
       try {
-        if (live) { const d = await api(`/v1/places/resolve?q=${encodeURIComponent(q)}`);
-          items = d.candidates.filter(c => c.centroid).map(c => ({name:c.canonical, kind:CLASS_WORDS[c.feature_class] || "", lat:c.centroid.coordinates[1], lng:c.centroid.coordinates[0]})); }
+        if (live) { const d = await api(`/v1/places/suggest?q=${encodeURIComponent(q)}`);
+          items = d.suggestions.map(s => ({name:s.name, kind:s.kind, near:s.near, lat:s.lat, lng:s.lng})); }
         else items = DEMO.places.filter(pl => pl[0].toLowerCase().includes(q.toLowerCase())).map(pl => ({name:pl[0], kind:pl[1], lat:pl[2], lng:pl[3]}));
-        sel = -1; show();
+        if (input.value.trim() !== q) return;                       // a newer keystroke is already being looked up
+        sel = -1; asked = true; show();
       } catch { close(); }
     }, 250);
   });
@@ -464,7 +501,7 @@ $("pick-to").onclick = () => setPick(pick === "to" ? null : "to");
     else if (e.key === "Enter" && sel >= 0) { e.preventDefault(); choose(items[sel]); }
     else if (e.key === "Escape") close();
   });
-  list.addEventListener("mousedown", e => { const li = e.target.closest("li"); if (li) { e.preventDefault(); choose(items[+li.dataset.i]); } });
+  list.addEventListener("mousedown", e => { const li = e.target.closest("li[data-i]"); if (li) { e.preventDefault(); choose(items[+li.dataset.i]); } });
   input.addEventListener("blur", () => setTimeout(close, 120));
 });
 
@@ -504,7 +541,7 @@ function drawRoutes(d){
       <div class="big"><b>${Math.round(v.duration_s/60)} min</b><span>${(v.distance_m/1000).toFixed(1)} km</span></div>
       ${v.via && v.via.length ? `<div class="via">via ${v.via.map(esc).join(", ")}</div>` : ""}
       <div class="note">${extra > 0 ? `${extra} min longer than the quickest vehicle. ` : ""}${only ? `Uses ${only} ${only === 1 ? "stretch" : "stretches"} the others cannot.` : ""}</div>
-      <a href="${esc(v.maps_url)}" target="_blank" rel="noopener">Open in Google Maps</a>${v.waze_url ? `<a href="${esc(v.waze_url)}" target="_blank" rel="noopener" title="Waze takes the destination only and picks its own route">Open in Waze</a>` : ""}<button class="linkbtn" data-save="${esc(code)}">Add to the daily brief</button></div></article>`);
+      <a href="${esc(v.maps_url)}" target="_blank" rel="noopener">Open in Google Maps</a>${v.waze_url ? `<a href="${esc(v.waze_url)}" target="_blank" rel="noopener" style="margin-left:16px" title="Waze takes the destination only and picks its own route">Open in Waze</a>` : ""}<button class="linkbtn" data-save="${esc(code)}">Add to the daily brief</button></div></article>`);
   }
   map.getSource("routes").setData(fc(feats)); $("plates").innerHTML = plates.join(""); $("routes-empty").hidden = plates.length > 0;
   const pts = feats.flatMap(f => f.geometry.coordinates); if (pts.length) fit(pts);
@@ -568,12 +605,33 @@ function showReading(d){
 function humanReason(r){ const m = /anchor '(.+)' did not resolve/.exec(r || ""); return m ? `“${m[1]}” is not a place DetourAI knows in this city.` : "No place name was found in the text."; }
 
 $("cands").onchange = loadZones;
+let zonePlates = [], reportSigns = [];
+const SIGN_WORDS = {WATER:"Water on the road", CLOSED:"Road closed", ACCIDENT:"Accident"};
+const SIGN_ART = {     // original pictograms inside a caution triangle
+  WATER:'<path d="M9 21q2-2.4 4 0t4 0t4 0t4 0" fill="none" stroke="#1E1A05" stroke-width="1.8" stroke-linecap="round"/><path d="M11 25q2-2.4 4 0t4 0t4 0" fill="none" stroke="#1E1A05" stroke-width="1.8" stroke-linecap="round"/><path d="M17 11.5c1.6 2.2 2.6 3.6 2.6 4.9a2.6 2.6 0 0 1-5.2 0c0-1.3 1-2.7 2.6-4.9z" fill="#1E1A05"/>',
+  CLOSED:'<rect x="9.5" y="17" width="15" height="4.6" rx="1" fill="#1E1A05"/><path d="M12.5 17l-2 4.6M16.5 17l-2 4.6M20.5 17l-2 4.6M24 17.6l-1.6 4" stroke="#fff" stroke-width="1.5"/><path d="M11.5 21.6v4M22.5 21.6v4" stroke="#1E1A05" stroke-width="1.8" stroke-linecap="round"/>',
+  ACCIDENT:'<path d="M17 12.5l1.4 4 4.1-1.3-2.6 3.3 3.3 2.5-4.2.2.4 4.2-2.4-3.4-2.4 3.4.4-4.2-4.2-.2 3.3-2.5-2.6-3.3 4.1 1.3z" fill="#1E1A05"/>'};
+const signSvg = kind => `<svg width="34" height="31" viewBox="0 0 34 31" aria-hidden="true"><path d="M17 2.2 32 28.6H2z" fill="#fff" stroke="#C8322B" stroke-width="3.2" stroke-linejoin="round"/>${SIGN_ART[kind] || ""}</svg>`;
+async function loadReports(){
+  if (!map) return;
+  let rows; try { rows = live ? (await api("/v1/reports")).reports : DEMO.reports; } catch { return; }
+  reportSigns.forEach(m => m.remove());
+  reportSigns = rows.map(r => { const el = document.createElement("div"), pending = r.outcome === "PENDING";
+    el.className = "sign" + (pending ? " pending" : ""); el.innerHTML = signSvg(r.kind); el.setAttribute("role", "img");
+    el.title = `${SIGN_WORDS[r.kind] || "Report"}, reported ${ago(r.created_at)}${pending ? ", not yet confirmed" : ", confirmed"}`; el.setAttribute("aria-label", el.title);
+    return new maplibregl.Marker({element:el, anchor:"bottom"}).setLngLat([r.lng, r.lat]).addTo(map); });
+}
 async function loadZones(){
   if (!map || !map.getSource("zones")) return;
   let data = DEMO.zones;
   if (live) { const b = map.getBounds(); if (map.getZoom() < 10) return;
     try { data = await api(`/v1/zones?bbox=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&include_candidates=${$("cands").checked}`); } catch { return; } }
   map.getSource("zones").setData(data);
+  zonePlates.forEach(m => m.remove());
+  zonePlates = data.features.filter(f => f.properties.lat != null).map(f => { const p = f.properties, el = document.createElement("div");
+    el.className = "zplate" + (p.status === "CANDIDATE" ? " candidate" : "");
+    el.textContent = p.status === "CANDIDATE" ? `${CAUSE_WORDS[p.cause] || "Restriction"}, unconfirmed` : `${CAUSE_WORDS[p.cause] || "Restriction"}, until ${p.until || "later"}`;
+    el.title = p.where || ""; return new maplibregl.Marker({element:el, anchor:"bottom", offset:[0, -6]}).setLngLat([p.lng, p.lat]).addTo(map); });
   $("zonelist").innerHTML = data.features.length ? data.features.map(f => { const p = f.properties, a = (typeof p.ir === "string" ? JSON.parse(p.ir) : p.ir)?.anchors || [];
       const where = a.length ? a.filter(x => x.role !== "VIA").map(x => x.text).join(" to ") : `zone ${p.zone_id}`;
       const until = new Date(p.valid_to).toLocaleTimeString("en-IN", {hour:"numeric", minute:"2-digit"});
@@ -621,9 +679,32 @@ function ago(iso){ if (!iso) return "never"; const m = Math.round((Date.now() - 
 const SRC_WORDS = {RSS:"News", X:"X", TELEGRAM:"Telegram", PASTE:"Pasted", TOMTOM:"TomTom", PDF_OCR:"PDF", FIELD_OFFICER:"Field report"};
 function why(r){ return r.reason === "NO_ANCHOR" ? "No place name was found in this sentence."
   : r.reason === "AMBIGUOUS" ? `“${r.anchor}” could be more than one place. Which one?` : `“${r.anchor}” is not a place DetourAI knows yet. Which place is it?`; }
+let corrCount = 0, reviewCount = 0;
+const showCount = () => { const n = corrCount + reviewCount; $("review-count").hidden = n === 0; $("review-count").textContent = n; };
+async function loadCorrections(){
+  let rows; try { rows = live ? (await api("/v1/corrections")).corrections : DEMO.corrections; } catch { return; }
+  corrCount = rows.length; showCount();
+  $("corrlist").innerHTML = rows.length ? rows.map(r => `<div class="road" data-way="${r.osm_way_id}" data-seg="${r.seg}" data-kind="${r.kind}" data-ll="${r.lng},${r.lat}">
+      <div class="feed-head"><h3>${esc(r.title)}</h3><span class="pill ${r.people > 1 ? "warn" : ""}">${r.people > 1 ? `${r.people} riders agree` : "1 rider"}</span></div>
+      <p class="hint" style="margin:2px 0 0">${esc(r.detail)}, latest ${ago(r.latest)}</p>
+      <p class="hint" style="margin:2px 0 0">On the map now: ${r.kind === "GATE_CLOSED" ? `gate ${r.gate_state === "OPEN" ? "open" : r.gate_state === "UNKNOWN" ? "state unknown" : "closed"}` : `${(+r.width_m).toFixed(1)} m wide${r.width_src === "CLASS_DEFAULT" || r.width_src === "LANES_INFER" ? ", an estimate" : ""}`}</p>
+      <p style="margin:6px 0 0">${esc(r.apply)}.</p>
+      <div class="actions" style="margin-top:8px"><button class="btn small go" data-corr="apply">Apply</button><button class="btn small" data-corr="dismiss">Dismiss</button><button class="btn small" data-corr="show">Show on map</button></div></div>`).join("")
+    : `<p class="empty">No corrections waiting.</p>`;
+}
+$("corrlist").onclick = async e => {
+  const b = e.target.closest("[data-corr]"), card = e.target.closest("[data-way]"); if (!b || !card) return;
+  if (b.dataset.corr === "show") { const [lng, lat] = card.dataset.ll.split(",").map(Number); if (map) map.flyTo({center:[lng, lat], zoom:16.5}); return; }
+  if (!needAdmin()) return;
+  try { const d = await api("/v1/corrections", {method:"POST", headers:adminHeaders(), body:JSON.stringify({osm_way_id:+card.dataset.way, seg:+card.dataset.seg, kind:card.dataset.kind, action:b.dataset.corr})});
+        toast(b.dataset.corr === "apply" ? `Applied. ${nIN(d.edges_changed)} road ${d.edges_changed === 1 ? "stretch" : "stretches"} changed; routes now follow it.` : "Dismissed.");
+        loadCorrections(); }
+  catch (err) { toast(err.message, true); }
+};
 async function loadReview(){
+  loadCorrections();
   let rows; try { rows = live ? await api("/v1/review") : DEMO.review; } catch { return; }
-  $("review-count").hidden = rows.length === 0; $("review-count").textContent = rows.length;
+  reviewCount = rows.length; showCount();
   $("reviewlist").innerHTML = rows.length ? rows.map(r => `<div class="road" data-review="${r.review_id}">
       <p class="hint" style="margin:0">${esc(SRC_WORDS[r.source_type] || r.source_type)}, ${esc(r.source_handle)}, ${ago(r.created_at)}</p>
       <p class="sent">${esc(r.sentence)}</p><p style="margin:0"><strong>${esc(why(r))}</strong></p>
@@ -647,9 +728,9 @@ $("reviewlist").addEventListener("click", e => {
 });
 $("reviewlist").addEventListener("input", e => {
   const input = e.target.closest("[data-search]"); if (!input) return; const list = input.nextElementSibling; clearTimeout(reviewTimer);
-  const q = input.value.trim(); if (q.length < 3) { list.hidden = true; return; }
+  const q = input.value.trim(); if (q.length < 2) { list.hidden = true; return; }
   reviewTimer = setTimeout(async () => {
-    let items = []; try { items = live ? (await api(`/v1/places/resolve?q=${encodeURIComponent(q)}`)).candidates.map(c => ({gaz_id:c.gaz_id, name:c.canonical, kind:CLASS_WORDS[c.feature_class] || ""}))
+    let items = []; try { items = live ? (await api(`/v1/places/suggest?q=${encodeURIComponent(q)}`)).suggestions.filter(s => s.gaz_id).map(s => ({gaz_id:s.gaz_id, name:s.name, kind:s.kind}))
       : DEMO.places.filter(pl => pl[0].toLowerCase().includes(q.toLowerCase())).map((pl, i) => ({gaz_id:9000 + i, name:pl[0], kind:pl[1]})); } catch {}
     list.innerHTML = items.map(it => `<li role="option" data-gaz="${it.gaz_id}"><span>${esc(it.name)}</span><small>${esc(it.kind)}</small></li>`).join(""); list.hidden = !items.length;
   }, 250);
@@ -721,7 +802,7 @@ $("feed-add").onclick = async () => {
         toast("Feed added. First check within 15 seconds."); $("feed-name").value = ""; $("feed-handle").value = ""; loadSources(); }
   catch (err) { toast(err.message, true); }
 };
-setInterval(() => { if (live) { loadReview(); if (activeTab() === "t-feeds") { loadChannels(); loadSources(); } } }, 60e3);
+setInterval(() => { if (live) { loadReview(); loadReports(); if (activeTab() === "t-feeds") { loadChannels(); loadSources(); } } }, 60e3);
 
 boot();
 </script>

@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Route card · DetourAI</title>
+<title>Live route · DetourAI</title>
+<meta name="theme-color" content="#2B2F33">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;800&display=swap" rel="stylesheet">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css" rel="stylesheet">
@@ -15,7 +16,7 @@
 @media (prefers-color-scheme: dark){ :root{ color-scheme:dark; --ink:#ECEEEF; --ink-2:#A9B1B8; --ground:#23272B; --surface:#2E3338; --rule:#454C53;
   --inform:#4C8FE0; --stop:#E5665F; --go:#4FB380; --r-a:#4C8FE0; --r-b:#4FB380; --r-c:#A27BD6; } }
 *{box-sizing:border-box} [hidden]{display:none!important} html,body{height:100%;margin:0}
-body{font:400 15px/1.45 var(--font);color:var(--ink);background:var(--ground);font-variant-numeric:tabular-nums;display:grid;grid-template-rows:auto auto 1fr auto;grid-template-columns:minmax(0,1fr)}
+body{font:400 15px/1.45 var(--font);color:var(--ink);background:var(--ground);font-variant-numeric:tabular-nums;display:grid;grid-template-rows:auto auto auto 1fr auto;grid-template-columns:minmax(0,1fr)}
 button{font:inherit;color:inherit} :focus-visible{outline:3px solid var(--divert);outline-offset:2px}
 .top{background:var(--asphalt);color:#fff;padding:calc(10px + env(safe-area-inset-top,0px)) 14px 10px;display:flex;align-items:center;gap:10px}
 .top h1{margin:0;font-size:17px;font-weight:800;line-height:1.15;flex:1;min-width:0} .top h1 small{display:block;font-weight:400;font-size:12.5px;color:#C9CED2}
@@ -33,6 +34,36 @@ button{font:inherit;color:inherit} :focus-visible{outline:3px solid var(--divert
 .rt[aria-pressed="true"]{background:var(--ground);box-shadow:inset 0 0 0 2px var(--c)}
 .go{flex:none;border:0;background:var(--inform);color:#fff;border-radius:6px;padding:0 14px;font-weight:600;cursor:pointer}
 .me{width:18px;height:18px;border-radius:50%;background:var(--inform);border:3px solid #fff;box-shadow:0 0 0 2px var(--inform)}
+/* why today is different: a diversion board across the top */
+.notice{background:var(--divert);color:var(--divert-ink);padding:9px 14px;font-weight:600;font-size:14.5px;line-height:1.35;border-bottom:2px solid var(--divert-ink)}
+.next .eta{margin-top:6px;font-weight:600;font-size:14.5px}
+/* each block names its row, so hiding the notice cannot shift the map into a zero-height row */
+.top{grid-row:1} .notice{grid-row:2} .next{grid-row:3} .mapwrap{grid-row:4} .bottom{grid-row:5}
+.mapwrap{position:relative;min-height:0;display:grid}
+.tools{position:absolute;right:10px;bottom:14px;display:grid;gap:8px;justify-items:end;z-index:2}
+.tool{border:1px solid var(--rule);background:var(--surface);color:var(--ink);border-radius:999px;padding:9px 14px;font-weight:600;font-size:14px;cursor:pointer;box-shadow:0 2px 8px rgba(20,22,24,.25)}
+.tool.report{background:var(--stop);border-color:var(--stop);color:#fff}
+.alert .pair{margin-left:auto;display:flex;gap:6px;flex:none} .alert .pair button{margin-left:0}
+.alert button.quiet{background:transparent;color:var(--divert-ink);border:2px solid var(--divert-ink)}
+.bar{flex-wrap:wrap}
+.go{min-height:44px} .go.wide{flex:1 1 100%;order:-1;font-size:17px;min-height:50px}
+.more{background:var(--surface);padding:0 12px calc(8px + env(safe-area-inset-bottom,0px));font-size:13px;color:var(--ink-2)}
+.more a{color:var(--inform);font-weight:600}
+.bar{padding-bottom:8px}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--surface);border-top:3px solid var(--stop);padding:14px 14px calc(14px + env(safe-area-inset-bottom,0px));box-shadow:0 -8px 24px rgba(20,22,24,.3)}
+.sheet h2{margin:0 0 4px;font-size:18px;font-weight:800} .sheet p{margin:0 0 12px;color:var(--ink-2);font-size:13.5px}
+.kinds{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.kind{border:1px solid var(--rule);background:var(--ground);color:var(--ink);border-radius:6px;padding:12px 6px;font-weight:600;cursor:pointer;display:grid;gap:6px;justify-items:center;font-size:14px}
+.sheet .cancel{margin-top:10px;width:100%;border:0;background:none;color:var(--ink-2);padding:10px;font-weight:600;cursor:pointer}
+.scrim{position:fixed;inset:0;background:rgba(20,22,24,.45);z-index:9}
+.sheet h2.sub{margin-top:14px;font-size:15px}
+.kind.plain{padding:14px 6px}
+.why{background:var(--surface);border-top:3px solid var(--inform);padding:10px 12px}
+.why p{margin:0 0 8px;font-weight:600}
+.why .opts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.why button{border:1px solid var(--rule);background:var(--ground);color:var(--ink);border-radius:6px;padding:10px 6px;font-weight:600;cursor:pointer}
+.hz{width:30px;height:27px} .hz svg{display:block;filter:drop-shadow(0 1px 2px rgba(20,22,24,.45))}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(120px + env(safe-area-inset-bottom,0px));z-index:11;background:var(--asphalt);color:#fff;padding:9px 14px;border-radius:6px;font-weight:600;font-size:14px;max-width:calc(100% - 24px);text-align:center}
 </style>
 </head>
 <body>
@@ -40,16 +71,48 @@ button{font:inherit;color:inherit} :focus-visible{outline:3px solid var(--divert
   <h1 id="name">Route card<small id="sub"></small></h1>
   <span class="state" id="state">Loading</span>
 </header>
+<div class="notice" id="notice" role="status" hidden></div>
 <section class="next" aria-live="polite">
   <div class="dist" id="dist">–</div>
   <div class="what" id="what">Finding the route</div>
   <div class="then" id="then"></div>
+  <div class="eta" id="eta" hidden></div>
 </section>
-<div id="map" aria-label="Map"></div>
-<div>
-  <div class="alert" id="alert" role="alert" hidden><span id="alert-text"></span><button id="alert-do">Switch</button></div>
-  <nav class="bar" id="bar" aria-label="Routes"></nav>
+<div class="mapwrap">
+  <div id="map" aria-label="Map"></div>
+  <div class="tools">
+    <button class="tool" id="recenter" hidden>Back to my position</button>
+    <button class="tool report" id="report-open" hidden>Report</button>
+  </div>
 </div>
+<div class="bottom">
+  <div class="alert" id="alert" role="alert" hidden><span id="alert-text"></span><button id="alert-do">Switch</button></div>
+  <div class="why" id="why" role="alert" hidden>
+    <p id="why-text"></p>
+    <div class="opts"><button data-why="BLOCKED">Road blocked</button><button data-why="GATE_CLOSED">Gate closed</button><button data-why="TOO_NARROW">Too narrow</button><button data-why="CHOICE">My choice</button></div>
+  </div>
+  <div class="alert" id="ask" role="alert" hidden><span id="ask-text"></span><span class="pair"><button id="ask-yes">Still blocked</button><button class="quiet" id="ask-no">Clear now</button></span></div>
+  <nav class="bar" id="bar" aria-label="Routes"></nav>
+  <div class="more" id="more" hidden></div>
+</div>
+<div class="scrim" id="scrim" hidden></div>
+<section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h" hidden>
+  <h2 id="sheet-h">What do you see?</h2>
+  <p>It is pinned where you are now, so others on this road are warned. Only tap when you are stopped.</p>
+  <div class="kinds">
+    <button class="kind" data-kind="WATER"><svg width="34" height="31" viewBox="0 0 34 31" aria-hidden="true"><path d="M17 2.2 32 28.6H2z" fill="#fff" stroke="#C8322B" stroke-width="3.2" stroke-linejoin="round"/><path d="M9 21q2-2.4 4 0t4 0t4 0t4 0" fill="none" stroke="#1E1A05" stroke-width="1.8" stroke-linecap="round"/><path d="M17 11.5c1.6 2.2 2.6 3.6 2.6 4.9a2.6 2.6 0 0 1-5.2 0c0-1.3 1-2.7 2.6-4.9z" fill="#1E1A05"/></svg>Water on road</button>
+    <button class="kind" data-kind="CLOSED"><svg width="34" height="31" viewBox="0 0 34 31" aria-hidden="true"><path d="M17 2.2 32 28.6H2z" fill="#fff" stroke="#C8322B" stroke-width="3.2" stroke-linejoin="round"/><rect x="9.5" y="17" width="15" height="4.6" rx="1" fill="#1E1A05"/><path d="M11.5 21.6v4M22.5 21.6v4" stroke="#1E1A05" stroke-width="1.8" stroke-linecap="round"/></svg>Road closed</button>
+    <button class="kind" data-kind="ACCIDENT"><svg width="34" height="31" viewBox="0 0 34 31" aria-hidden="true"><path d="M17 2.2 32 28.6H2z" fill="#fff" stroke="#C8322B" stroke-width="3.2" stroke-linejoin="round"/><path d="M17 12.5l1.4 4 4.1-1.3-2.6 3.3 3.3 2.5-4.2.2.4 4.2-2.4-3.4-2.4 3.4.4-4.2-4.2-.2 3.3-2.5-2.6-3.3 4.1 1.3z" fill="#1E1A05"/></svg>Accident</button>
+  </div>
+  <h2 class="sub">Something wrong with this route?</h2>
+  <div class="kinds">
+    <button class="kind plain" data-fb="GATE_CLOSED">Gate closed</button>
+    <button class="kind plain" data-fb="TOO_NARROW">Too narrow</button>
+    <button class="kind plain" data-fb="NO_ENTRY">No entry here</button>
+  </div>
+  <button class="cancel" id="sheet-cancel">Cancel</button>
+</section>
+<div class="toast" id="toast" role="status" hidden></div>
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
@@ -57,6 +120,10 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 const COLOR = {A:"--r-a", B:"--r-b", C:"--r-c"};
 const params = new URLSearchParams(location.search);
 const routeId = (location.pathname.match(/\/card\/(\d+)/) || [])[1] || params.get("id");
+const tripToken = (location.pathname.match(/\/go\/([0-9a-f]{32})/) || [])[1];           // a subscriber's own trip
+const packUrl = tripToken ? `/v1/trips/${tripToken}` : routeId ? `/v1/packs/${routeId}` : null;
+const cacheKey = "pack:" + (tripToken || routeId);
+if (tripToken) { const l = document.createElement("link"); l.rel = "manifest"; l.href = `/go/${tripToken}/manifest.webmanifest`; document.head.append(l); }
 const CRAWL_KMH = 8, CRAWL_MS = 4 * 60e3, AHEAD_M = 1500, OFF_ROUTE_M = 60;
 
 /* ---------- geometry on the phone: no server needed ---------- */
@@ -93,24 +160,27 @@ function demoPack(){
       B:{label:"B", minutes:36, km:8.4, via:["Road No 36","Road No 45"], geometry:{type:"LineString",coordinates:B},
          decision_point:{at_m:Math.round(measure(B)[1]), lat:B[1][1], lng:B[1][0], onto:"Road No 36"},
          turns:turns(B, [[0,"Start on Hitec City Main Road","Hitec City Main Road"],[1,"Turn right onto Road No 36","Road No 36"],[4,"Turn left onto Road No 45","Road No 45"],[7,"Continue onto KBR Park Road","KBR Park Road"]])}},
-    zones:{type:"FeatureCollection",features:[{type:"Feature",properties:{cause:"WATERLOGGING",status:"ACTIVE"},geometry:{type:"Polygon",coordinates:[[[78.4150,17.4462],[78.4226,17.4420],[78.4236,17.4434],[78.4160,17.4476],[78.4150,17.4462]]]}}]}};
+    hazards:[{report_id:7, kind:"ACCIDENT", confirmed:false, lat:17.4322, lng:78.4335}],
+    notice:"Waterlogging at Jubilee Hills Check Post, until about 9:40 am. Route A goes round it, about 12 min longer than usual.",
+    maps_url:"https://www.google.com/maps/dir/?api=1&destination=17.41260%2C78.44800&travelmode=two-wheeler", waze_url:"https://waze.com/ul?ll=17.41260%2C78.44800&navigate=yes&utm_source=detourai",
+    zones:{type:"FeatureCollection",features:[{type:"Feature",properties:{zone_id:12,cause:"WATERLOGGING",status:"ACTIVE",label:"Waterlogging",where:"at Jubilee Hills Check Post",lat:17.4448,lng:78.4193},geometry:{type:"Polygon",coordinates:[[[78.4150,17.4462],[78.4226,17.4420],[78.4236,17.4434],[78.4160,17.4476],[78.4150,17.4462]]]}}]}};
 }
 
 /* ---------- state ---------- */
 let pack, source = "live", active = "A", lines = {}, map, me, pos = null, track = [], lastAlong = 0, spoken = new Set(), proposed = null, wake = null, simTimer = null;
 
 async function loadPack(){
-  const key = "pack:" + routeId;
-  if (routeId && location.protocol !== "file:") {
-    try { const r = await fetch(`/v1/packs/${routeId}`); if (!r.ok) throw 0; pack = await r.json(); source = "live"; try { localStorage.setItem(key, JSON.stringify(pack)); } catch {} return; } catch {}
+  const key = cacheKey;
+  if (packUrl && location.protocol !== "file:") {
+    try { const r = await fetch(packUrl); if (!r.ok) throw 0; pack = await r.json(); source = "live"; try { localStorage.setItem(key, JSON.stringify(pack)); } catch {} return; } catch {}
   }
-  try { const saved = routeId && localStorage.getItem(key); if (saved) { pack = JSON.parse(saved); source = "saved"; return; } } catch {}
+  try { const saved = packUrl && localStorage.getItem(key); if (saved) { pack = JSON.parse(saved); source = "saved"; return; } } catch {}
   pack = demoPack(); source = "preview";
 }
 function setState(){
   const t = new Date(pack.built_at).toLocaleTimeString("en-IN", {hour:"numeric", minute:"2-digit"});
   const online = navigator.onLine && source === "live";
-  $("state").textContent = source === "preview" ? "Preview data" : online ? "Live" : `No connection · saved ${t}`;
+  $("state").textContent = source === "preview" ? "Preview data" : online ? "Live" : `No connection, saved ${t}`;
   $("state").className = "state" + (online ? "" : " off");
 }
 function chooseFromHash(){ const h = location.hash.replace("#", "").toUpperCase(); if (pack.routes[h]) setActive(h, false); }
@@ -123,13 +193,20 @@ function setActive(label, say = true){
 }
 function renderBar(){
   $("bar").innerHTML = Object.values(pack.routes).map(r => `<button class="rt" style="--c:var(${COLOR[r.label]})" aria-pressed="${r.label === active}" data-r="${r.label}">
-      <b>${r.label}: ${r.minutes} min</b><span>via ${esc((r.via || []).join(", ") || "local roads")}</span></button>`).join("") + `<button class="go" id="go">${simTimer || wake ? "Stop" : "Start"}</button>`;
+      <b>${r.label}: ${r.minutes} min</b><span>via ${esc((r.via || []).join(", ") || "local roads")}</span></button>`).join("")
+    + (started() ? `<button class="go" id="go">Stop</button>` : `<button class="go wide" id="go">Start route ${active}</button>`);
+  $("notice").hidden = !pack.notice || started();               // once moving, the map gets the room
 }
 $("bar").onclick = e => { const b = e.target.closest("[data-r]"); if (b) { setActive(b.dataset.r); return; } if (e.target.id === "go") toggleStart(); };
 
+const started = () => !!(simTimer || wake);
+const canReport = () => !!tripToken || source === "preview";      // team-route cards have no subscriber to report as
+let toastTimer;
+function toast(text){ const t = $("toast"); t.textContent = text; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 4200); }
+
 /* ---------- map ---------- */
 const BLANK = {version:8, sources:{}, layers:[{id:"bg", type:"background", paint:{"background-color":"#E4E7E9"}}]};
-async function style(){ try { const c = new AbortController(); setTimeout(() => c.abort(), 3500); const r = await fetch("https://tiles.openfreemap.org/styles/positron", {signal:c.signal}); if (!r.ok) throw 0; return await r.json(); } catch { return BLANK; } }
+async function style(){ try { const c = new AbortController(); setTimeout(() => c.abort(), 3500); const r = await fetch("https://tiles.openfreemap.org/styles/liberty", {signal:c.signal}); if (!r.ok) throw 0; return await r.json(); } catch { return BLANK; } }
 function hatch(){ const c = document.createElement("canvas"); c.width = c.height = 16; const x = c.getContext("2d"); x.fillStyle = "rgba(242,183,5,.85)"; x.fillRect(0,0,16,16); x.strokeStyle = "rgba(30,26,5,.85)"; x.lineWidth = 4;
   for (const o of [-16,0,16]) { x.beginPath(); x.moveTo(o,16); x.lineTo(o+16,0); x.stroke(); } const d = x.getImageData(0,0,16,16); return {width:16, height:16, data:d.data}; }
 function paint(){
@@ -151,6 +228,8 @@ async function initMap(){
     const all = Object.values(pack.routes).flatMap(r => r.geometry.coordinates), xs = all.map(c => c[0]), ys = all.map(c => c[1]);
     map.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]], {padding:40, duration:0});
     const el = document.createElement("div"); el.innerHTML = '<div class="me"></div>'; me = new maplibregl.Marker({element:el});
+    map.on("dragstart", () => { if (started()) { follow = false; $("recenter").hidden = false; } });      // the person is looking around
+    drawHazards();
   });
 }
 
@@ -163,12 +242,19 @@ function guide(){
   const next = r.turns.find(t => t.at_m > along + 15) || r.turns[r.turns.length - 1];
   const after = r.turns[r.turns.indexOf(next) + 1];
   const left = Math.max(0, next.at_m - along);
-  if (off !== null && off > OFF_ROUTE_M) { $("dist").textContent = fmt(off); $("what").textContent = `Off Route ${active}. Head back to ${r.turns.filter(t => t.at_m <= along).pop()?.road || "the route"}`; $("then").textContent = ""; return; }
-  $("dist").textContent = pos ? fmt(left) : `${r.minutes} min · ${r.km} km`;
+  if (off !== null && off > OFF_ROUTE_M) { if (!offSince) offSince = Date.now(); if (!whyAsked && started() && Date.now() - offSince >= OFF_ASK_MS) askWhy();
+    $("eta").hidden = true;                                       // an arrival time means nothing while off the route
+    $("dist").textContent = fmt(off); $("what").textContent = `Off Route ${active}. Head back to ${r.turns.filter(t => t.at_m <= along).pop()?.road || "the route"}`; $("then").textContent = ""; return; }
+  offSince = null; whyAsked = false; $("why").hidden = true; if (pos) lastOn = pos.slice();          // back on the route
+  $("dist").textContent = pos ? fmt(left) : `${r.minutes} min, ${r.km} km`;
+  if (pos) { const total = L.cum[L.cum.length - 1], rest = Math.max(0, total - along), secs = r.minutes * 60 * rest / (total || 1);
+    $("eta").textContent = `Arrive about ${new Date(Date.now() + secs * 1000).toLocaleTimeString("en-IN", {hour:"numeric", minute:"2-digit"})}, ${Math.max(1, Math.round(secs / 60))} min, ${fmt(rest)} left`;
+    $("eta").hidden = false; } else $("eta").hidden = true;
   $("what").textContent = pos ? next.text : r.turns[0].text;
   $("then").textContent = pos && after ? `Then: ${after.text}` : `Route ${active}${r.via?.length ? " via " + r.via.join(", ") : ""}. Usual time ${pack.usual_minutes} min.`;
   if (pos) for (const [mark, lead] of [[300, "In 300 metres, "], [60, ""]]) { const k = next.at_m + ":" + mark; if (left <= mark && !spoken.has(k) && next.text !== "Arrive") { spoken.add(k); speak(lead + next.text); break; } }
   if (pos && next.text === "Arrive" && left < 40 && !spoken.has("arrive")) { spoken.add("arrive"); speak("You have arrived"); }
+  hazardAhead(along);
   crawlCheck(along);
 }
 function ahead(label, along){                    // metres to the point where `label` leaves the active route, if still ahead
@@ -187,11 +273,101 @@ function crawlCheck(along){                      // works with no network: the p
   const kmh = (along - old.along) / ((now - old.t) / 1000) * 3.6; if (kmh >= CRAWL_KMH) return;
   for (const l of Object.keys(pack.routes)) { const d = ahead(l, along); if (d !== null && d <= AHEAD_M) { propose(l, "Traffic is crawling."); return; } }
 }
-function onPosition(lng, lat){ pos = [lng, lat]; if (me && map) { me.setLngLat(pos).addTo(map); map.easeTo({center:pos, duration:600}); } guide(); }
+let follow = true, lastFix = null;
+function onPosition(lng, lat){
+  const moved = lastFix ? hav(lastFix, [lng, lat]) : 0;
+  const bearing = lastFix && moved > 8 ? (Math.atan2((lng - lastFix[0]) * Math.cos(rad(lat)), lat - lastFix[1]) * 180 / Math.PI + 360) % 360 : null;
+  if (!lastFix || moved > 8) lastFix = [lng, lat];
+  pos = [lng, lat];
+  if (me && map) { me.setLngLat(pos).addTo(map);
+    if (follow) map.easeTo({center:pos, duration:600, ...(started() ? {zoom:Math.max(map.getZoom(), 15.5), pitch:45, ...(bearing !== null ? {bearing} : {})} : {})}); }
+  guide(); nearZone();
+}
+$("recenter").onclick = () => { follow = true; $("recenter").hidden = true; if (pos && map) map.easeTo({center:pos, zoom:Math.max(map.getZoom(), 15.5), duration:500}); };
+
+/* ---------- the route was wrong: say why in one tap, then get a way from here ---------- */
+const OFF_ASK_MS = 12e3;
+let offSince = null, whyAsked = false, lastOn = null;
+function askWhy(){ whyAsked = true; $("why-text").textContent = `You left Route ${active}. What happened?`; $("why").hidden = false; }
+async function sendFeedback(kind, at){
+  if (source === "preview") { toast("Preview: nothing was sent."); return null; }
+  if (!tripToken) return null;                                    // a team route has no subscriber to speak for
+  try { const r = await fetch(`/v1/trips/${tripToken}/feedback`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({kind, lat:at[1], lng:at[0]})});
+        const d = await r.json();
+        if (!r.ok || !d.ok) { if (d.reason === "limit") toast("You have reached today's limit for corrections."); return null; }
+        if (kind !== "CHOICE") toast(kind === "BLOCKED" ? `Reported as blocked on ${d.road || "that road"}.` : `Noted on ${d.road || "that road"}. It will be checked and fixed for everyone.`);
+        return d.edge_id; }
+  catch { toast("No connection. It was not sent."); return null; }
+}
+async function reroute(avoidEdge){
+  if (!packUrl || source === "preview" || !pos) return;
+  try { const r = await fetch(`${packUrl}/reroute?lat=${pos[1]}&lng=${pos[0]}${avoidEdge ? `&avoid=${avoidEdge}` : ""}`);
+        if (!r.ok) { toast("No other way was found from here."); return; }
+        pack = await r.json(); source = "live"; active = "A"; proposed = null; prepare(); drawHazards();
+        if (map && map.getSource("zones")) map.getSource("zones").setData(pack.zones);
+        toast("New route from where you are."); speak(`New route. ${pack.routes.A.turns[0].text}`); }
+  catch { toast("No connection: follow the turn list back to the route."); }
+}
+$("why").addEventListener("click", async e => { const b = e.target.closest("[data-why]"); if (!b) return; $("why").hidden = true;
+  const edge = await sendFeedback(b.dataset.why, lastOn || pos); await reroute(b.dataset.why === "CHOICE" ? null : edge); });
+
+/* ---------- what others reported on this route: shown as signs, spoken before you reach them ---------- */
+const HZ_WORDS = {WATER:"Water on the road", CLOSED:"A closed road", ACCIDENT:"An accident"};
+const HZ_ART = {WATER:'<path d="M9 21q2-2.4 4 0t4 0t4 0t4 0" fill="none" stroke="#1E1A05" stroke-width="1.8" stroke-linecap="round"/><path d="M17 11.5c1.6 2.2 2.6 3.6 2.6 4.9a2.6 2.6 0 0 1-5.2 0c0-1.3 1-2.7 2.6-4.9z" fill="#1E1A05"/>',
+  CLOSED:'<rect x="9.5" y="17" width="15" height="4.6" rx="1" fill="#1E1A05"/><path d="M11.5 21.6v4M22.5 21.6v4" stroke="#1E1A05" stroke-width="1.8" stroke-linecap="round"/>',
+  ACCIDENT:'<path d="M17 12.5l1.4 4 4.1-1.3-2.6 3.3 3.3 2.5-4.2.2.4 4.2-2.4-3.4-2.4 3.4.4-4.2-4.2-.2 3.3-2.5-2.6-3.3 4.1 1.3z" fill="#1E1A05"/>'};
+let hzMarkers = [];
+function drawHazards(){
+  hzMarkers.forEach(m => m.remove()); hzMarkers = [];
+  if (!map || !window.maplibregl) return;
+  for (const h of pack.hazards || []) { const el = document.createElement("div"); el.className = "hz"; el.title = HZ_WORDS[h.kind] || "A report";
+    el.innerHTML = `<svg width="30" height="27" viewBox="0 0 34 31" aria-hidden="true"><path d="M17 2.2 32 28.6H2z" fill="#fff" stroke="#C8322B" stroke-width="3.2" stroke-linejoin="round"/>${HZ_ART[h.kind] || ""}</svg>`;
+    hzMarkers.push(new maplibregl.Marker({element:el, anchor:"bottom"}).setLngLat([h.lng, h.lat]).addTo(map)); }
+}
+function hazardAhead(along){
+  if (!pos) return;
+  for (const h of pack.hazards || []) { const k = "hz" + h.report_id; if (spoken.has(k)) continue;
+    const at = project(lines[active].coords, lines[active].cum, [h.lng, h.lat]); if (at.off > 80) continue;
+    const d = at.along - along; if (d <= 30 || d > 500) continue;
+    spoken.add(k); const text = `${HZ_WORDS[h.kind] || "A problem"} reported ${fmt(d)} ahead${h.confirmed ? "" : ", not yet confirmed"}.`; toast(text); speak(text); return; }
+}
+
+/* ---------- report from the road, and "still blocked?" when passing a zone ---------- */
+const openSheet = on => { $("sheet").hidden = !on; $("scrim").hidden = !on; if (on) $("sheet").querySelector(".kind").focus(); };
+$("report-open").onclick = () => openSheet(true);
+$("sheet-cancel").onclick = $("scrim").onclick = () => openSheet(false);
+addEventListener("keydown", e => { if (e.key === "Escape" && !$("sheet").hidden) openSheet(false); });
+$("sheet").addEventListener("click", async e => {
+  const f = e.target.closest("[data-fb]");
+  if (f) { openSheet(false); if (!pos) { toast("Press Start first, so it is pinned where you are."); return; }
+    const edge = await sendFeedback(f.dataset.fb, pos); if (edge) await reroute(edge); return; }
+  const b = e.target.closest("[data-kind]"); if (!b) return; openSheet(false);
+  if (!pos) { toast("Press Start first, so the report is pinned where you are."); return; }
+  if (source === "preview") { toast("Preview: nothing was sent."); return; }
+  try { const r = await fetch(`/v1/trips/${tripToken}/report`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({kind:b.dataset.kind, lat:pos[1], lng:pos[0]})});
+        const d = await r.json();
+        toast(!r.ok ? "The report could not be sent." : d.ok ? (d.merged ? `Thanks. That confirms a report already on ${d.road}.` : `Reported on ${d.road}. Thank you.`)
+              : d.reason === "limit" ? "You have reached today's limit for reports." : "That spot is not on a road I know."); }
+  catch { toast("No connection. The report was not sent."); }
+});
+const askedZones = new Set();
+function nearZone(){
+  if (!canReport() || !pos || !$("ask").hidden) return;
+  for (const f of pack.zones?.features || []) { const p = f.properties;
+    if (p.lat == null || askedZones.has(p.zone_id) || hav(pos, [p.lng, p.lat]) > 250) continue;
+    askedZones.add(p.zone_id);
+    $("ask-text").textContent = `${p.label || "A closure"} ${p.where || "near you"}. Is it still blocked?`;
+    const answer = yes => async () => { $("ask").hidden = true;
+      if (source === "preview") { toast("Preview: nothing was sent."); return; }
+      try { await fetch(`/v1/trips/${tripToken}/confirm`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({zone_id:p.zone_id, yes})}); toast("Thanks. That keeps the map right."); }
+      catch { toast("No connection. Your answer was not sent."); } };
+    $("ask-yes").onclick = answer(true); $("ask-no").onclick = answer(false); $("ask").hidden = false; return; }
+}
 
 /* ---------- start, stop, simulate ---------- */
 async function toggleStart(){
-  if (simTimer || wake !== null) { clearInterval(simTimer); simTimer = null; if (wake?.release) wake.release(); wake = null; if (toggleStart.watch) navigator.geolocation.clearWatch(toggleStart.watch); renderBar(); return; }
+  if (simTimer || wake !== null) { clearInterval(simTimer); simTimer = null; if (wake?.release) wake.release(); wake = null; if (toggleStart.watch) navigator.geolocation.clearWatch(toggleStart.watch);
+    follow = true; $("recenter").hidden = true; if (map) map.easeTo({pitch:0, bearing:0, duration:400}); renderBar(); return; }
   try { wake = (await navigator.wakeLock?.request("screen")) || true; } catch { wake = true; }
   if (params.has("sim") || source === "preview") {                       // demo and tests: drive the active route
     let m = 0; const step = +(params.get("step") || 120);
@@ -207,8 +383,10 @@ async function toggleStart(){
 async function poll(){
   if (source !== "live" || !navigator.onLine) { setState(); return; }
   try {
-    const s = await (await fetch(`/v1/packs/${routeId}/status`)).json();
-    if (s.stale) { await loadPack(); prepare(); return; }
+    if (pack.rerouted) { setState(); return; }                 // a route made from here is not the saved trip; leave it be
+    const s = await (await fetch(`${packUrl}/status`)).json();
+    if (s.stale) { await loadPack(); prepare(); drawHazards(); return; }
+    if (s.hazards) { pack.hazards = s.hazards; drawHazards(); }
     if (s.best && s.best !== active) { const d = pos ? ahead(s.best, project(lines[active].coords, lines[active].cum, pos).along) : 1; if (d !== null) propose(s.best, "A faster way opened up."); }
   } catch { source = "saved"; }
   setState();
@@ -218,6 +396,12 @@ function prepare(){
   document.title = `${pack.name} · DetourAI`; $("name").firstChild.textContent = pack.name;
   $("sub").textContent = `${pack.from.label || "Start"} to ${pack.to.label || "destination"}`;
   if (!pack.routes[active]) active = pack.best || "A";
+  $("notice").textContent = pack.notice || ""; $("notice").hidden = !pack.notice;
+  $("report-open").hidden = !canReport();
+  const apps = [pack.maps_url && `<a href="${esc(pack.maps_url)}" target="_blank" rel="noopener">Google Maps</a>`, pack.waze_url && `<a href="${esc(pack.waze_url)}" target="_blank" rel="noopener">Waze</a>`].filter(Boolean);
+  const standalone = matchMedia("(display-mode: standalone)").matches;
+  $("more").innerHTML = (apps.length ? `Prefer another app? ${apps.join(" or ")}.` : "") + (tripToken && !standalone ? " Add this page to your home screen from the browser menu to open it like an app." : "");
+  $("more").hidden = !$("more").innerHTML;
   setState(); renderBar(); paint(); guide();
 }
 (async () => {

@@ -1,5 +1,5 @@
 // DetourAI route card service worker: the card, its libraries and the last pack keep working with no network.
-const SHELL = "detour-card-v1";
+const SHELL = "detour-card-v2";
 const ASSETS = [
   "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css",
@@ -9,8 +9,8 @@ self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Pr
 self.addEventListener("fetch", e => {
   const u = new URL(e.request.url);
   if (e.request.method !== "GET") return;
-  const isCard = u.origin === location.origin && u.pathname.startsWith("/card/");
-  const isPack = u.origin === location.origin && /^\/v1\/packs\/\d+$/.test(u.pathname);
+  const isCard = u.origin === location.origin && (u.pathname.startsWith("/card/") || /^\/go\/[0-9a-f]{32}$/.test(u.pathname));
+  const isPack = u.origin === location.origin && (/^\/v1\/packs\/\d+$/.test(u.pathname) || /^\/v1\/trips\/[0-9a-f]{32}$/.test(u.pathname));
   const isAsset = ASSETS.includes(e.request.url) || u.hostname === "fonts.googleapis.com" || u.hostname === "fonts.gstatic.com";
   if (isCard || isPack) {                       // network first, saved copy when the network is gone
     e.respondWith(fetch(e.request).then(r => { if (r.ok) caches.open(SHELL).then(c => c.put(e.request, r.clone())); return r; })

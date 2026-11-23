@@ -14,3 +14,5 @@ verify/work/
 verify/reports/*
 !verify/reports/.gitkeep
 verify/review/
+.githooks/
+.aidlc/

@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timezone
 
 from .. import profiles, routing
-from ..config import PII_KEY, PII_PEPPER
+from ..config import PII_KEY, PII_PEPPER, PUBLIC_BASE_URL
 from . import chat
 
 PROFILE_CODES = {"2W": ["2W"], "4W": ["4W_HATCH"], "BOTH": ["2W", "4W_HATCH"]}
@@ -130,6 +130,18 @@ def apply(c, channel: str, raw_id: str, idh: bytes, state: dict, effects: list[d
                 c.execute("UPDATE client.subscriber SET stopped_at = now() WHERE sub_id = %s", (sub,))
                 state["step"] = "HOME"
                 extra[:] = [chat.ask_location("I could not find a road between those two pins for your vehicle. Share the start of your trip again, a little closer to a main road.")]
+        elif do == "links":
+            sid = _sub_id(c, channel, idh)
+            rows = c.execute("SELECT label, token FROM client.corridor WHERE sub_id = %s ORDER BY label", (sid,)).fetchall() if sid else []
+            if not PUBLIC_BASE_URL:
+                extra.append(chat.text("The live route page is not switched on for this server yet. Alerts still carry a Google Maps link."))
+            elif not rows:
+                extra.append(chat.text("I have no route for you yet. Send RESET to set one up."))
+            else:
+                names = {"home-work": "Morning", "work-home": "Evening"}
+                lines = [f"{names.get(r['label'], 'Trip')}: {PUBLIC_BASE_URL}/go/{r['token']}" for r in rows]
+                extra.append(chat.text("Your live route, with turn-by-turn and re-routing:\n" + "\n".join(lines) +
+                                       "\nOpen it before you set off; it keeps working without data. Keep these links to yourself: they show your route."))
         elif do == "report":
             from . import reports                                   # here to avoid an import cycle with fanout
             sid = _sub_id(c, channel, idh)

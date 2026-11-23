@@ -100,7 +100,7 @@ function render(b){
     : `<p class="quiet">No team routes saved yet. On the map, compare a route and choose “Add to the daily brief”.</p>`;
 }
 async function load(){
-  try { const r = await fetch("/v1/brief"); if (!r.ok) throw 0; render(await r.json()); }
+  try { const r = await fetch("/v1/brief"); if (r.status === 401) { location.href = "/login?next=/brief"; return; } if (!r.ok) throw 0; render(await r.json()); }
   catch { live = false; $("preview").hidden = false; render(DEMO); }
 }
 $("wa").onclick = async () => {

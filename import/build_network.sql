@@ -182,6 +182,9 @@ UPDATE net.edge_dim d
 SET static_mask = net.static_mask(e.oneway, d.width_m, d.clearance_m, d.max_gvw_t, d.layout_private) & d.access_mask
 FROM net.edge e WHERE e.edge_id = d.edge_id;
 
+-- corrections riders reported and an operator accepted (width, no entry) go back onto the rebuilt edges
+DO $$ BEGIN IF to_regproc('net.apply_corrections') IS NOT NULL THEN PERFORM net.apply_corrections(); END IF; END $$;
+
 -- gate cut sets onto the new edge ids
 UPDATE net.gate g SET cut_set = COALESCE((
   SELECT array_agg(DISTINCT e.edge_id ORDER BY e.edge_id) FROM net.gate_cut_old o JOIN net.edge e USING (osm_way_id, seg)

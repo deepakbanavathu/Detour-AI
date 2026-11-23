@@ -6,11 +6,11 @@ a phone or an account and are run before a demo or a release.
 
 | Suite | Command | Needs | Count |
 | --- | --- | --- | --- |
-| Unit | `make test` | Python only | 161 |
+| Unit | `make test` | Python only | 179 |
 | SQL parse | `make test-sql` | Python only | 298 statements |
-| Browser (preview data) | `make test-ui` | Playwright + Chromium | 25 |
-| Live end to end | `make test-live` | running stack with Hyderabad imported | 18 |
-| Database | `pytest -m db tests/integration` with `DETOUR_DB` set | a database with a network imported | 1 (20 assertions) |
+| Browser (preview data) | `make test-ui` | Playwright + Chromium | 39 |
+| Live end to end | `make test-live` | running stack with Hyderabad imported | 22 |
+| Database | `pytest -m db tests/integration` with `DETOUR_DB` set | a database with a network imported | 3 |
 
 ## 1. Advisory parsing (text to IR)
 
@@ -228,7 +228,74 @@ a phone or an account and are run before a demo or a release.
 | LK-08 | Report pin, question to people on the route, trust after confirmation, removal by a proven reporter | as stated | Auto db |
 | LK-09 | No crowd report in the feed unconfirmed; report zones within 40 m of their pin | 0 violations | Verifier criteria C01, C02 |
 
-## 14. Security and access
+## 14. Sign-in and response time (v0.12)
+
+| Id | Scenario | Expected | Runs |
+| --- | --- | --- | --- |
+| SI-01 | Session cookie | valid until expiry; a changed expiry or signature is refused; malformed values refused | Auto `test_auth.py` (2 tests) |
+| SI-02 | Password check; default password detected; empty password never signs in | as stated | Auto `test_password_check` |
+| SI-03 | Five wrong tries | that address locked for five minutes; others unaffected; a correct sign-in clears it | Auto `test_five_wrong_tries_lock_that_address_for_five_minutes` |
+| SI-04 | No session and no token | pages redirect to sign-in; data endpoints, the static console and the API docs answer 401; sign-in page, health, service worker and feed stay open | Auto live `test_sign_in_guards_pages_and_data` |
+| SI-05 | Sign in, use the console, act as admin, sign out | cookie is HttpOnly and SameSite=Strict; admin action works; after sign-out 401 | Auto live (same test) |
+| SI-06 | Sign-in page | renders on a phone width; reports an unreachable server; password field uses the browser's password manager | Auto UI `test_login_page_renders_and_reports_an_unreachable_server` |
+| RT-11 | Repeat route | same answer, not slower; compressed | Auto live `test_repeat_route_is_answered_from_memory_until_something_changes` |
+| RT-12 | An edge change after a cached route | the next request recomputes | Manual in the build sandbox: misses went 1 to 2 after an edge update |
+| RT-13 | Latency criteria | timed on the real search (`fresh=1`), with the cached repeat reported beside it | Verifier L01 to L03 |
+
+## 15. Search, live map objects and the Waze comparison page (v0.13)
+
+| Id | Scenario | Expected | Runs |
+| --- | --- | --- | --- |
+| SR-01 | Typing two letters, a word start, a number, a misspelling, wildcard characters | suggestions from the second letter; `%` and `_` matched literally | Auto `test_search.py` (2 tests); sandbox database run |
+| SR-02 | Nothing matches | the list says so and points to the pin button; the message cannot be chosen | Auto UI `test_search_starts_at_two_letters_and_says_when_nothing_matches` |
+| SR-03 | Fallback geocoder answer | named points inside the city, once each; skipped under four letters or when switched off | Auto `test_geocoder_answer_keeps_named_points_inside_the_city_once_each`, `test_geocoder_is_skipped...` |
+| SR-04 | Real city: "ma", "madh", "Madhap" | Madhapur suggested each time | Auto live `test_search_suggests_from_the_first_letters` |
+| SR-05 | Fallback geocoder against the real service | suggestions for a locality missing from the gazetteer | Manual: type a small colony name |
+| MP-07 | Report signs | one triangle per report; unconfirmed ones pulse; titles say what, when and whether confirmed; pulse stops under reduced motion | Auto UI `test_reports_show_as_caution_signs...`, `test_reduced_motion_stops_the_pulse` |
+| MP-08 | Zone plate | "Waterlogging, until 9:40 am" at the zone, the stretch in its tooltip | Auto UI `test_zone_carries_a_plate_saying_what_and_until_when` |
+| MP-09 | Colour basemap on real tiles | streets, parks and water in colour; routes and zones stay legible on top | Manual: open the console with internet |
+| WZ-01 | Waze page | Waze's map centred on the city, recentred with a pin for a zone; times recorded, lead shown, sheet downloaded in the verifier's format; pressing again takes a time back | Auto UI `test_waze_page_times_who_showed_a_closure_first` |
+| WZ-02 | Waze page needs sign-in; zone and report feeds | 303 without a session; lists returned | Auto live `test_map_feeds_for_the_console_and_the_waze_page`, sandbox run |
+| WZ-03 | The embedded Waze map itself | loads, shows Hyderabad traffic | Manual: needs internet |
+
+## 16. The live route page for subscribers (v0.14)
+
+| Id | Scenario | Expected | Runs |
+| --- | --- | --- | --- |
+| LR-01 | The sentence that says why today differs | none without a zone; one zone; several; no way round | Auto `test_trips.py::test_notice_says_why_today_differs` |
+| LR-02 | Trip tokens | 32 lowercase hex only; anything else is "not found" | Auto `test_trip_tokens_are_32_lowercase_hex_and_nothing_else`; sandbox API: bad token 404 |
+| LR-03 | Short links to the live route | only this server's own `/go/` address, and only when a public address is set | Auto `test_short_links_may_open_this_servers_own_live_route_and_no_one_elses` |
+| LR-04 | Alert buttons | live route first on Telegram and WhatsApp, Maps and Waze as choices; the template button carries the live-route token; Maps stays the button with no public address | Auto `test_alert_opens_the_live_route_first_on_each_channel`, `test_without_a_public_address...` |
+| LR-05 | ROUTE in chat | links once set up; a reason otherwise | Auto `test_route_command_asks_the_store_for_links_once_set_up` |
+| LR-06 | A subscriber's trip end to end: two tokens, the pack, a zone landing on the usual road changes the notice, the alert's three buttons and their targets, ROUTE links, DELETE ends the link | as stated | Auto db `test_trip_page_data_alert_and_route_command` |
+| LR-07 | Page, manifest and icon reachable on the public address; console is not; report and confirm over HTTP; unknown zone not counted; bad kind refused | as stated | Sandbox API run |
+| LR-08 | First screen | the reason, the time, one full-width Start named for the route, other apps as a quiet line | Auto UI `test_card_opens_with_the_reason_and_one_clear_action` |
+| LR-09 | While moving | reason hidden, arrival line shown, "Back to my position" after panning, Stop restores | Auto UI `test_card_while_moving_shows_arrival_and_gives_the_map_the_room` |
+| LR-10 | Report | sheet with three choices, Escape closes, refused with a reason until there is a position | Auto UI `test_card_report_is_one_tap_and_needs_a_position` |
+| LR-11 | Still blocked | asked once within 250 m of a zone, not far away, not twice | Auto UI `test_card_asks_still_blocked_once_when_passing_a_zone` |
+| LR-12 | On a phone: position with data off, voice, home-screen install, battery over 45 minutes | works | Manual, not yet done |
+
+## 17. Riders correct the route (v0.15)
+
+| Id | Scenario | Expected | Runs |
+| --- | --- | --- | --- |
+| RC-01 | Width set when a vehicle did not fit | just under what that vehicle needs; a road too narrow for a car stays open to scooters | Auto `test_feedback.py::test_too_narrow_sets_a_width_just_under_what_that_vehicle_needs` |
+| RC-02 | What the console says for a group of reports | who, where, and what Apply will do | Auto `test_descriptions_say_who_where_and_what_apply_does` |
+| RC-03 | Two riders report too narrow; one says "my choice" | one correction, two riders; the map is unchanged until applied | Auto db `test_corrections_from_report_to_route` |
+| RC-04 | The reporter's next route | steers clear of the stretch at once | Auto db; sandbox API (route went round the stretch) |
+| RC-05 | Apply | width 2.0 m, source FEEDBACK, cars shut out, scooters not; correction stored by OSM way and segment | Auto db |
+| RC-06 | A rebuild resets the width | `net.apply_corrections()` puts it back; `net.corrections_unapplied()` returns 0 | Auto db; verifier criterion I08 |
+| RC-07 | Re-applying migrations | does not undo an accepted correction | Verifier criterion I02 (now also compares the network) |
+| RC-08 | Gate closed: dismiss, then apply | map untouched; then gate marked closed | Auto db |
+| RC-09 | Pin far from any road; eleventh correction in a day | refused with the reason | Auto db |
+| RC-10 | Leaving the route | not asked on the first stray fix; asked after the wait; four choices; once per departure; again on a new departure | Auto UI `test_leaving_the_route_asks_why_in_one_tap` |
+| RC-11 | Corrections in the Report sheet | need a position; sent from where the person is | Auto UI `test_route_correction_from_the_report_sheet` |
+| RC-12 | A report ahead on the route | drawn as a sign; announced once within 500 m | Auto UI `test_a_report_ahead_on_the_route_is_announced_once` |
+| RC-13 | Console corrections list | riders agreeing, what the map says now, what Apply does; refused in preview | Auto UI `test_console_lists_rider_corrections_with_what_apply_will_do` |
+| RC-14 | Applying needs admin; corrections list is not reachable on the public address | 401; 404 | Sandbox API run |
+| RC-15 | On the road: do riders answer the question, and is the new route sensible | to be learned | Manual, with real riders |
+
+## 18. Security and access
 
 | Id | Scenario | Expected | Runs |
 | --- | --- | --- | --- |

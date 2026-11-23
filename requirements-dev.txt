@@ -1,5 +1,5 @@
 -r api/requirements.txt
 pytest==8.3.4
 ruff==0.8.4
-pglast==7.2
+pglast==7.24
 playwright==1.49.1

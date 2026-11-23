@@ -13,7 +13,8 @@
   "I05": "a hand-mapped gate with a cut set, a sink and an alert survive the rebuild (fixed in v0.9)",
   "F01": "the Waze-format feed for one police closure is valid and lies on the named roads",
   "F02": "no feed entry comes from a licensed traffic feed",
-  "C01": "no unconfirmed crowd report in the feed"
+  "C01": "no unconfirmed crowd report in the feed",
+  "I08": "a rider correction accepted on Island Road is back on the edge after the network is rebuilt, and re-applying migrations does not undo it"
  },
  "expected": {
   "A01": "pass",
@@ -47,6 +48,7 @@
   "I05": "pass",
   "I06": "pass",
   "I07": "pass",
+  "I08": "pass",
   "L01": "pass",
   "L02": "pass",
   "L03": "pass",

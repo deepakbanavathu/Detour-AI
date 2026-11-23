@@ -26,10 +26,10 @@ def norm(q: str) -> str:
     return q.replace("{', '.join(sets)}", "updated_at = now()").replace("{col}", "home_enc").replace("{reachable}", "true")
 
 
-from app import brief, cifs, gazetteer, main, packs, pipeline, profiles, routing, worker, zones  # noqa: E402
+from app import brief, cifs, feedback, gazetteer, main, packs, pipeline, profiles, routing, worker, zones  # noqa: E402
 from app.channels import fanout, reports, store  # noqa: E402
 
-for mod in (brief, gazetteer, main, packs, pipeline, worker, zones, fanout, store, reports):
+for mod in (brief, feedback, gazetteer, main, packs, pipeline, worker, zones, fanout, store, reports):
     src = inspect.getsource(mod)
     blocks = [m.group(1) for m in re.finditer(r'"""\n(\s+(?:SELECT|INSERT|UPDATE|WITH)\b.*?)"""', src, re.S)]
     blocks += [m.group(1) for m in re.finditer(r'execute\(\s*f?"((?:SELECT|UPDATE|INSERT|WITH)[^"\n]+)"\s*[,)]', src)]
@@ -42,7 +42,7 @@ for mod in (brief, gazetteer, main, packs, pipeline, worker, zones, fanout, stor
             print(f"FAIL {mod.__name__}: {e} | {q.strip()[:100]}")
 
 p = profiles.Profile(2, "4W_HATCH", 1.7, 1.55, 0.17, False, 90)
-for sql in (routing._edge_sql(p, (78.3, 17.4, 78.5, 17.5)), routing._edge_sql(p, (78.3, 17.4, 78.5, 17.5), False, [1, 2], 5.0), gazetteer._RESOLVE_SQL, fanout._MATCH, cifs._ZONES, cifs._LINES, cifs._POINT):
+for sql in (routing._edge_sql(p, (78.3, 17.4, 78.5, 17.5)), routing._edge_sql(p, (78.3, 17.4, 78.5, 17.5), False, [1, 2], 5.0), gazetteer._RESOLVE_SQL, gazetteer._SUGGEST_SQL, fanout._MATCH, cifs._ZONES, cifs._LINES, cifs._POINT):
     n += 1
     try:
         pglast.parse_sql(norm(sql))

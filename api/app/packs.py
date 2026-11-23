@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 
 from . import maps, profiles, routing
-from .config import CITY_ID
+from .config import CITY_ID, PII_KEY
 from .db import conn
 
 MAX_SHARED = 0.40                 # an alternate may share at most this fraction of its own length with an earlier route
@@ -121,19 +122,52 @@ def _route_payload(label: str, r: routing.RouteResult, a_ids: list[int] | None) 
             "decision_point": dp}
 
 
-def build(route_id: int, city_id: int = CITY_ID) -> dict:
-    with conn() as c:
-        tr = c.execute(
-            "SELECT route_id, name, profile, origin_label, dest_label, ST_Y(origin) olat, ST_X(origin) olng, ST_Y(dest) dlat, ST_X(dest) dlng "
-            "FROM client.team_route WHERE route_id = %s AND city_id = %s AND active", (route_id, city_id)).fetchone()
-    if tr is None:
-        raise LookupError("team route not found")
-    p = profiles.get(tr["profile"])
-    o, d = (tr["olat"], tr["olng"]), (tr["dlat"], tr["dlng"])
+def notice_text(zones: list[dict], extra_min: int | None) -> str | None:
+    """One sentence on why this trip differs today, for the top of the route card. zones: [{cause, where, until}]."""
+    if not zones:
+        return None
+    if len(zones) == 1:
+        z = zones[0]
+        lead = f"{z['cause']} {z['where']}, until about {z['until']}."
+        it = "it"
+    else:
+        lead = f"{len(zones)} closures on your usual road, the first until about {zones[0]['until']}."
+        it = "them"
+    if extra_min is None:
+        return f"{lead} No way round was found for this vehicle."
+    tail = f"about {extra_min} min longer than usual" if extra_min >= 2 else "in about the usual time"
+    return f"{lead} Route A goes round {it}, {tail}."
 
-    found: list[tuple[str, routing.RouteResult]] = [("A", routing.route(p, o, d))]
+
+AVOID_PENALTY = 50.0             # a stretch the person just said they cannot use: taken only if nothing else reaches the destination
+HAZARD_M = 60.0
+
+
+def hazards_near(c, geometries: list[dict]) -> list[dict]:
+    """Recent reports from the road lying on any of these route lines: what, where, and whether anyone confirmed it."""
+    if not geometries:
+        return []
+    return [dict(r) for r in c.execute(
+        """
+        WITH lines AS (SELECT ST_Collect(ST_SetSRID(ST_GeomFromGeoJSON(g), 4326)) AS g FROM unnest(%s::text[]) AS g)
+        SELECT r.report_id, r.kind, r.outcome = 'CONFIRMED' AS confirmed, ST_Y(r.geom) AS lat, ST_X(r.geom) AS lng
+        FROM client.report r LEFT JOIN geo.zone_of_avoidance z USING (zone_id), lines
+        WHERE r.created_at > now() - interval '3 hours' AND r.outcome IN ('PENDING','CONFIRMED')
+          AND (z.zone_id IS NULL OR (z.status IN ('ACTIVE','DECAYING','CANDIDATE') AND z.valid_to > now()))
+          AND ST_DWithin(r.geom::geography, lines.g::geography, %s)
+        ORDER BY r.report_id DESC LIMIT 40
+        """, ([json.dumps(g) for g in geometries], HAZARD_M)).fetchall()]
+
+
+def compose(name: str, profile_code: str, o: tuple[float, float], d: tuple[float, float], from_label: str | None, to_label: str | None,
+            city_id: int = CITY_ID, avoid: list[int] | None = None) -> tuple[dict, dict]:
+    """Up to three routes for one trip, with turn lists, decision points, today's zones and the reason the trip
+    differs from usual. -> (pack for the phone, edge lists kept on the server for status checks)."""
+    p = profiles.get(profile_code)
+    avoid = [int(x) for x in (avoid or [])]
+    found: list[tuple[str, routing.RouteResult]] = [("A", routing.route(p, o, d, penalize=avoid, penalty=AVOID_PENALTY) if avoid else routing.route(p, o, d))]
     for label in LABELS[1:]:
-        taken = [e["edge_id"] for _, r in found for e in r.edges]
+        taken = avoid + [e["edge_id"] for _, r in found for e in r.edges]
         for pen in PENALTIES:
             try:
                 cand = routing.route(p, o, d, penalize=taken, penalty=pen)
@@ -150,33 +184,62 @@ def build(route_id: int, city_id: int = CITY_ID) -> dict:
     edge_lists = {label: [e["edge_id"] for e in r.edges] for label, r in found}
     edges = {label: [[e["edge_id"], float(e["length_m"])] for e in r.edges] for label, r in found}
     try:
-        usual = round(routing.route(p, o, d, use_zones=False).duration_s / 60)
+        usual_r = routing.route(p, o, d, use_zones=False)
+        usual = round(usual_r.duration_s / 60)
     except routing.NoRoute:
-        usual = routes["A"]["minutes"]
+        usual_r, usual = None, routes["A"]["minutes"]
 
     xs = [pt[0] for r in routes.values() for pt in r["geometry"]["coordinates"]]
     ys = [pt[1] for r in routes.values() for pt in r["geometry"]["coordinates"]]
     with conn() as c:
         zrows = c.execute(
             """
-            SELECT z.zone_id, z.cause, z.status, z.valid_to, ST_AsGeoJSON(z.geom)::json AS geometry
+            SELECT z.zone_id, z.cause, z.status, z.valid_to, ST_AsGeoJSON(z.geom)::json AS geometry,
+                   ST_Y(ST_PointOnSurface(z.geom)) AS lat, ST_X(ST_PointOnSurface(z.geom)) AS lng,
+                   (SELECT a.ir FROM ingest.advisory_ir a WHERE a.ir_id = z.ir_id) AS ir,
+                   CASE WHEN %s::text IS NULL THEN false ELSE ST_Intersects(z.geom, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)) END AS on_usual
             FROM geo.zone_of_avoidance z
             WHERE z.city_id = %s AND z.status IN ('ACTIVE','DECAYING') AND z.valid_to > now()
               AND z.geom && ST_Expand(ST_MakeEnvelope(%s, %s, %s, %s, 4326), 0.01)
+            ORDER BY z.valid_to
             """,
-            (city_id, min(xs), min(ys), max(xs), max(ys)),
+            (json.dumps(usual_r.geometry) if usual_r else None, json.dumps(usual_r.geometry) if usual_r else None,
+             city_id, min(xs), min(ys), max(xs), max(ys)),
         ).fetchall()
-        pack = {
-            "route_id": tr["route_id"], "name": tr["name"], "profile": p.code, "version": version_of(edge_lists),
-            "built_at": datetime.now(timezone.utc).isoformat(), "usual_minutes": usual, "best": "A",
-            "from": {"lat": o[0], "lng": o[1], "label": tr["origin_label"]}, "to": {"lat": d[0], "lng": d[1], "label": tr["dest_label"]},
-            "routes": routes,
-            "zones": {"type": "FeatureCollection", "features": [
-                {"type": "Feature", "geometry": z["geometry"],
-                 "properties": {"zone_id": z["zone_id"], "cause": z["cause"], "status": z["status"], "valid_to": z["valid_to"].isoformat()}}
-                for z in zrows]},
-            "maps_url": maps.maps_url(p.code, d, maps.waypoints(found[0][1].edges), o),
-        }
+        hazards = hazards_near(c, [r["geometry"] for r in routes.values()])
+    from . import brief
+    from .channels.alerts import CAUSE
+    touching = [{"cause": CAUSE.get(z["cause"], "Restriction"), "where": brief._where(z["ir"], z["zone_id"]), "until": brief._clock(z["valid_to"])}
+                for z in zrows if z["on_usual"]]
+    pack = {
+        "name": name, "profile": p.code, "version": version_of(edge_lists),
+        "built_at": datetime.now(timezone.utc).isoformat(), "usual_minutes": usual, "best": "A",
+        "from": {"lat": o[0], "lng": o[1], "label": from_label}, "to": {"lat": d[0], "lng": d[1], "label": to_label},
+        "routes": routes,
+        "notice": notice_text(touching, routes["A"]["minutes"] - usual),
+        "zones": {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "geometry": z["geometry"],
+             "properties": {"zone_id": z["zone_id"], "cause": z["cause"], "status": z["status"], "valid_to": z["valid_to"].isoformat(),
+                            "label": CAUSE.get(z["cause"], "Restriction"), "where": brief._where(z["ir"], z["zone_id"]),
+                            "lat": z["lat"], "lng": z["lng"]}}
+            for z in zrows]},
+        "hazards": hazards,
+        "maps_url": maps.maps_url(p.code, d, maps.waypoints(found[0][1].edges), o),
+        "waze_url": maps.waze_url(d),
+    }
+    return pack, edges
+
+
+def build(route_id: int, city_id: int = CITY_ID) -> dict:
+    with conn() as c:
+        tr = c.execute(
+            "SELECT route_id, name, profile, origin_label, dest_label, ST_Y(origin) olat, ST_X(origin) olng, ST_Y(dest) dlat, ST_X(dest) dlng "
+            "FROM client.team_route WHERE route_id = %s AND city_id = %s AND active", (route_id, city_id)).fetchone()
+    if tr is None:
+        raise LookupError("team route not found")
+    pack, edges = compose(tr["name"], tr["profile"], (tr["olat"], tr["olng"]), (tr["dlat"], tr["dlng"]), tr["origin_label"], tr["dest_label"], city_id)
+    pack["route_id"] = tr["route_id"]
+    with conn() as c:
         c.execute(
             """
             INSERT INTO client.route_pack (route_id, version, pack, edges) VALUES (%s, %s, %s::jsonb, %s::jsonb)
@@ -218,3 +281,92 @@ def status(route_id: int, city_id: int = CITY_ID) -> dict:
     label, overlap = best_label(cur.edges, row["edges"])
     return {"version": row["version"], "best": label if overlap >= STALE_OVERLAP else None, "stale": overlap < STALE_OVERLAP,
             "blocked": False, "minutes": round(cur.duration_s / 60), "overlap": round(overlap, 2), "checked_at": now}
+
+
+# ---------------------------------------------------------------- subscriber trips (the live route page at /go/<token>)
+
+TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
+TRIP_NAME = {"home-work": "Morning trip", "work-home": "Evening trip"}
+TRIP_PROFILE = {"2W": "2W", "4W": "4W_HATCH", "BOTH": "2W"}       # 'both' rides the scooter route; the car route is one tap away in Maps
+
+
+def valid_token(token: str) -> bool:
+    return bool(TOKEN_RE.match(token or ""))
+
+
+def _trip(c, token: str) -> dict | None:
+    return c.execute(
+        """
+        SELECT k.corr_id, k.sub_id, k.label, s.profile, k.pack, k.pack_edges, k.pack_built_at,
+               pgp_sym_decrypt(k.origin_enc, %s) AS o, pgp_sym_decrypt(k.dest_enc, %s) AS d
+        FROM client.corridor k JOIN client.subscriber s USING (sub_id) WHERE k.token = %s
+        """, (PII_KEY, PII_KEY, token)).fetchone()
+
+
+def _ll(s: str) -> tuple[float, float]:
+    a, b = s.split(",")
+    return float(a), float(b)
+
+
+def trip_get(token: str, rebuild: bool = False) -> dict:
+    """The pack for one subscriber's trip. The token is the only key: whoever holds the link sees that trip."""
+    if not valid_token(token):
+        raise LookupError("trip not found")
+    with conn() as c:
+        t = _trip(c, token)
+    if t is None:
+        raise LookupError("trip not found")
+    fresh = t["pack"] and t["pack_built_at"] and (datetime.now(timezone.utc) - t["pack_built_at"]).total_seconds() < MAX_AGE_S
+    if fresh and not rebuild:
+        return t["pack"]
+    pack, edges = compose(TRIP_NAME.get(t["label"], "Your trip"), TRIP_PROFILE.get(t["profile"], "2W"), _ll(t["o"]), _ll(t["d"]), "Start", "Destination")
+    pack["token"], pack["trip"] = token, t["label"]
+    with conn() as c:
+        c.execute("UPDATE client.corridor SET pack = %s::jsonb, pack_edges = %s::jsonb, pack_built_at = now() WHERE token = %s",
+                  (json.dumps(pack), json.dumps(edges), token))
+        c.commit()
+    return pack
+
+
+def trip_status(token: str) -> dict:
+    if not valid_token(token):
+        raise LookupError("trip not found")
+    with conn() as c:
+        t = _trip(c, token)
+    if t is None or not t["pack"]:
+        raise LookupError("no pack built for this trip yet")
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        cur = routing.route(profiles.get(TRIP_PROFILE.get(t["profile"], "2W")), _ll(t["o"]), _ll(t["d"]))
+    except routing.NoRoute:
+        return {"version": t["pack"]["version"], "best": None, "stale": False, "blocked": True, "minutes": None, "checked_at": now}
+    label, overlap = best_label(cur.edges, t["pack_edges"])
+    with conn() as c:
+        hazards = hazards_near(c, [r["geometry"] for r in t["pack"]["routes"].values()])
+    return {"version": t["pack"]["version"], "best": label if overlap >= STALE_OVERLAP else None, "stale": overlap < STALE_OVERLAP,
+            "blocked": False, "minutes": round(cur.duration_s / 60), "overlap": round(overlap, 2), "checked_at": now, "hazards": hazards}
+
+
+def trip_reroute(token: str, pos: tuple[float, float], avoid: list[int] | None = None) -> dict:
+    """A fresh set of routes from where the person is now to the trip's end, steering clear of stretches they just
+    said they cannot use. Not stored: the saved pack stays the trip from its usual start."""
+    if not valid_token(token):
+        raise LookupError("trip not found")
+    with conn() as c:
+        t = _trip(c, token)
+    if t is None:
+        raise LookupError("trip not found")
+    pack, _ = compose(TRIP_NAME.get(t["label"], "Your trip"), TRIP_PROFILE.get(t["profile"], "2W"), pos, _ll(t["d"]), "Where you are", "Destination", avoid=avoid)
+    pack.update(token=token, trip=t["label"], rerouted=True)
+    return pack
+
+
+def team_reroute(route_id: int, pos: tuple[float, float], avoid: list[int] | None = None, city_id: int = CITY_ID) -> dict:
+    with conn() as c:
+        tr = c.execute("SELECT name, profile, dest_label, ST_Y(dest) dlat, ST_X(dest) dlng FROM client.team_route WHERE route_id = %s AND city_id = %s AND active",
+                       (route_id, city_id)).fetchone()
+    if tr is None:
+        raise LookupError("team route not found")
+    pack, _ = compose(tr["name"], tr["profile"], pos, (tr["dlat"], tr["dlng"]), "Where you are", tr["dest_label"], city_id, avoid=avoid)
+    pack.update(route_id=route_id, rerouted=True)
+    return pack

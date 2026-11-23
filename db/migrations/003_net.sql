@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS net.edge_h3 (                -- cell-to-edge with len
 CREATE TABLE IF NOT EXISTS net.edge_dim (
   edge_id        BIGINT PRIMARY KEY REFERENCES net.edge ON DELETE CASCADE,
   width_m        REAL NOT NULL,
-  width_src      TEXT NOT NULL CHECK (width_src IN ('OSM_TAG','LANES_INFER','CLASS_DEFAULT','SURVEY','TELEMETRY')),
+  width_src      TEXT NOT NULL,                       -- allowed values are set in migration 017, so re-applying this file never narrows them
   clearance_m    REAL,                                -- maxheight; NULL = unrestricted
   max_gvw_t      REAL,
   surface_class  SMALLINT NOT NULL,                   -- 0 asphalt, 1 concrete, 2 paving, 3 unpaved

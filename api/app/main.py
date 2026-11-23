@@ -5,6 +5,8 @@ import hashlib
 import json
 import logging
 import secrets
+import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,11 +14,12 @@ from typing import Annotated
 
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import brief as briefmod, cifs, gazetteer, maps, packs, pipeline, profiles, routing, zones
+from . import auth, brief as briefmod, cifs, feedback, gazetteer, geocode, maps, packs, pipeline, profiles, routing, zones
 from .channels import chat, fanout, sms, telegram, whatsapp
 from .channels import store as chan_store
 from .config import (ADMIN_TOKEN, CITY_ID, PUBLIC_BASE_URL, SMS_PROVIDER, TELEGRAM_WEBHOOK_SECRET, WHATSAPP_ALERT_TEMPLATE,
@@ -41,8 +44,8 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 # What may be reached through the public address (PUBLIC_BASE_URL). Everything else, including the console, the brief
 # and every admin endpoint, answers 404 there and stays reachable only on the local address.
-PUBLIC_PREFIXES = ("/webhooks/", "/r/", "/card/", "/v1/packs/")
-PUBLIC_PATHS = ("/sw.js", "/v1/feeds/cifs.json", "/v1/feeds/cifs.xml")
+PUBLIC_PREFIXES = ("/webhooks/", "/r/", "/card/", "/v1/packs/", "/go/", "/v1/trips/")
+PUBLIC_PATHS = ("/sw.js", "/app-icon.svg", "/v1/feeds/cifs.json", "/v1/feeds/cifs.xml")
 _PUBLIC_HOST = PUBLIC_BASE_URL.split("://", 1)[-1].split("/", 1)[0].lower()
 
 
@@ -50,12 +53,68 @@ def public_path_allowed(path: str) -> bool:
     return path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES)
 
 
+OPEN_PATHS = ("/login", "/v1/login", "/v1/logout", "/v1/session", "/healthz")
+PAGE_PATHS = ("/", "/console", "/brief", "/waze")
+
+
 @app.middleware("http")
 async def public_surface(request: Request, call_next):
+    path = request.url.path
     host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip().lower()
-    if _PUBLIC_HOST and host == _PUBLIC_HOST and not (public_path_allowed(request.url.path) and request.method in ("GET", "POST", "HEAD")):
+    if _PUBLIC_HOST and host == _PUBLIC_HOST and not (public_path_allowed(path) and request.method in ("GET", "POST", "HEAD")):
         return PlainTextResponse("Not found", status_code=404)
+
+    # everything that is not public by design needs a signed-in session or the admin token
+    if auth.REQUIRE_LOGIN and not public_path_allowed(path) and path not in OPEN_PATHS:
+        token = request.headers.get("x-admin-token")
+        signed_in = auth.valid(request.cookies.get(auth.COOKIE))
+        if not signed_in and not (token and secrets.compare_digest(token, ADMIN_TOKEN)):
+            if path in PAGE_PATHS and request.method == "GET":
+                return RedirectResponse(f"/login?next={path}", status_code=303)
+            return Response('{"detail":"sign in required"}', status_code=401, media_type="application/json")
+        if signed_in and not token:                 # a session carries admin rights: present it as the token downstream
+            request.scope["headers"] = [*request.scope["headers"], (b"x-admin-token", ADMIN_TOKEN.encode())]
     return await call_next(request)
+
+
+app.add_middleware(GZipMiddleware, minimum_size=1024)      # route geometry and the brief compress about five-fold
+
+
+class LoginIn(BaseModel):
+    password: str = Field(min_length=1, max_length=200)
+
+
+@app.get("/login")
+def login_page():
+    return FileResponse(STATIC / "login.html")
+
+
+@app.get("/v1/session")
+def session(request: Request):
+    return {"signed_in": auth.valid(request.cookies.get(auth.COOKIE)), "login_required": auth.REQUIRE_LOGIN,
+            "default_password": auth.uses_default_password()}
+
+
+@app.post("/v1/login")
+def login(body: LoginIn, request: Request):
+    who = request.client.host if request.client else "?"
+    if auth.locked_out(who):
+        raise HTTPException(429, "too many attempts; wait five minutes")
+    if not auth.password_ok(body.password):
+        auth.record_failure(who)
+        raise HTTPException(401, "wrong password")
+    auth.clear_failures(who)
+    res = Response('{"signed_in":true}', media_type="application/json")
+    res.set_cookie(auth.COOKIE, auth.issue(), max_age=auth.SESSION_HOURS * 3600, httponly=True, samesite="strict",
+                   secure=request.url.scheme == "https", path="/")
+    return res
+
+
+@app.post("/v1/logout")
+def logout():
+    res = Response('{"signed_in":false}', media_type="application/json")
+    res.delete_cookie(auth.COOKIE, path="/")
+    return res
 
 
 def _latlng(s: str) -> tuple[float, float]:
@@ -116,14 +175,21 @@ def service_worker():
                     headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
 
 
+_COUNTS: dict = {"at": 0.0, "edges": 0, "gazetteer": 0}
+
+
 @app.get("/healthz")
 def healthz():
     with conn() as c:
-        n = c.execute("SELECT count(*) AS n FROM net.edge").fetchone()["n"]
-        g = c.execute("SELECT count(*) AS n FROM geo.gazetteer").fetchone()["n"]
+        if time.monotonic() - _COUNTS["at"] > 300 or not _COUNTS["edges"]:      # the two big tables change only on import
+            _COUNTS.update(at=time.monotonic(),
+                           edges=c.execute("SELECT count(*) AS n FROM net.edge").fetchone()["n"],
+                           gazetteer=c.execute("SELECT count(*) AS n FROM geo.gazetteer").fetchone()["n"])
+        n, g = _COUNTS["edges"], _COUNTS["gazetteer"]
         z = c.execute("SELECT count(*) AS n FROM geo.zone_of_avoidance WHERE status IN ('ACTIVE','DECAYING') AND valid_to > now()").fetchone()["n"]
         r = c.execute("SELECT count(*) AS n FROM ingest.review WHERE status = 'OPEN'").fetchone()["n"]
-    return {"ok": True, "edges": n, "gazetteer": g, "active_zones": z, "open_reviews": r, "profiles": profiles.codes()}
+    return {"ok": True, "edges": n, "gazetteer": g, "active_zones": z, "open_reviews": r, "profiles": profiles.codes(),
+            "route_cache": dict(routing.CACHE_STATS)}
 
 
 # ---------------------------------------------------------------- routing
@@ -134,6 +200,7 @@ def get_route(
     from_: Annotated[str, Query(alias="from", description="lat,lng")] = ...,
     to: Annotated[str, Query(description="lat,lng")] = ...,
     include_origin: bool = Query(False, description="put the origin in the Maps URL (fleets); commuters use phone position"),
+    fresh: bool = Query(False, description="compute even if the answer is remembered (used to time the real search)"),
 ):
     try:
         p = profiles.get(profile)
@@ -141,7 +208,7 @@ def get_route(
         raise HTTPException(400, str(e)) from None
     origin, dest = _latlng(from_), _latlng(to)
     try:
-        r = routing.route(p, origin, dest)
+        r = routing.route(p, origin, dest, fresh=fresh)
     except routing.NoRoute as e:
         raise HTTPException(404, str(e)) from None
     pins = maps.waypoints(r.edges)
@@ -169,23 +236,32 @@ def compare(
 ):
     """The demo moment: the same two points for several profiles, side by side."""
     origin, dest = _latlng(from_), _latlng(to)
-    out: dict[str, dict] = {}
-    for code in profiles_.split(","):
+    codes = [c for c in profiles_.split(",") if c.strip()][:7]
+
+    def one(code: str):
         try:
             p = profiles.get(code)
-            r = routing.route(p, origin, dest)
-            out[p.code] = {
-                "distance_m": round(r.distance_m, 1),
-                "duration_s": round(r.duration_s, 1),
-                "edge_ids": [e["edge_id"] for e in r.edges],
-                "via": _via(r.edges),
-                "maps_url": maps.maps_url(p.code, dest, maps.waypoints(r.edges)), "waze_url": maps.waze_url(dest),
-                "geometry": r.geometry,
-                "snap_from": _snap_dict(r.snap_from),
-                "snap_to": _snap_dict(r.snap_to),
-            }
+            return p.code, routing.route(p, origin, dest), p
         except (ValueError, routing.NoRoute) as e:
-            out[code.upper()] = {"error": str(e)}
+            return code.upper(), e, None
+
+    with ThreadPoolExecutor(max_workers=min(4, len(codes) or 1)) as pool:     # each vehicle on its own connection
+        results = list(pool.map(one, codes))
+    out: dict[str, dict] = {}
+    for code, r, p in results:
+        if p is None:
+            out[code] = {"error": str(r)}
+            continue
+        out[p.code] = {
+            "distance_m": round(r.distance_m, 1),
+            "duration_s": round(r.duration_s, 1),
+            "edge_ids": [e["edge_id"] for e in r.edges],
+            "via": _via(r.edges),
+            "maps_url": maps.maps_url(p.code, dest, maps.waypoints(r.edges)), "waze_url": maps.waze_url(dest),
+            "geometry": r.geometry,
+            "snap_from": _snap_dict(r.snap_from),
+            "snap_to": _snap_dict(r.snap_to),
+        }
     sets = {k: set(v["edge_ids"]) for k, v in out.items() if "edge_ids" in v}
     if len(sets) >= 2:
         for k, s in sets.items():
@@ -243,6 +319,31 @@ def places_resolve(q: str = Query(..., min_length=2, max_length=80), near: str |
                             "score": round(float(x["score"]), 3), "centroid": geoms.get(x["gaz_id"])} for x in cands]}
 
 
+_CITY: dict = {}
+
+
+def _city() -> dict:
+    """The city's name, centre and bounding box, read once."""
+    if not _CITY:
+        with conn() as c:
+            r = c.execute("SELECT name, ST_XMin(bbox) x0, ST_YMin(bbox) y0, ST_XMax(bbox) x1, ST_YMax(bbox) y1 FROM geo.city WHERE city_id = %s", (CITY_ID,)).fetchone()
+        _CITY.update(name=r["name"], bbox=(r["x0"], r["y0"], r["x1"], r["y1"]), center={"lat": (r["y0"] + r["y1"]) / 2, "lng": (r["x0"] + r["x1"]) / 2})
+    return _CITY
+
+
+@app.get("/v1/places/suggest")
+def places_suggest(q: str = Query(..., min_length=2, max_length=80)):
+    """Suggestions while a name is being typed: the city's own gazetteer first, then an OpenStreetMap search for the rest."""
+    with conn() as c:
+        rows = gazetteer.suggest(c, q, CITY_ID)
+    out = [{"gaz_id": r["gaz_id"], "name": r["canonical"], "kind": r["feature_class"].lower(), "lat": r["clat"], "lng": r["clng"],
+            "source": "gazetteer", "near": None} for r in rows]
+    if len(out) < 3:
+        have = {o["name"].lower() for o in out}
+        out += [x for x in geocode.search(q, _city()["bbox"]) if x["name"].lower() not in have][: 8 - len(out)]
+    return {"query": q, "suggestions": out}
+
+
 # ---------------------------------------------------------------- advisories -> zones
 
 class PasteIn(BaseModel):
@@ -283,8 +384,9 @@ def get_zones(bbox: Annotated[str, Query(description="min_lng,min_lat,max_lng,ma
     with conn() as c:
         rows = c.execute(
             """
-            SELECT zone_id, event_type, cause, status, penalty_factor, confidence, bearing_center, bearing_halfwidth,
-                   corroborations, valid_from, valid_to, ST_AsGeoJSON(geom)::json AS geometry,
+            SELECT zone_id, event_type, cause, status, origin, penalty_factor, confidence, bearing_center, bearing_halfwidth,
+                   corroborations, valid_from, valid_to, created_at, ST_AsGeoJSON(geom)::json AS geometry,
+                   ST_Y(ST_PointOnSurface(geom)) AS lat, ST_X(ST_PointOnSurface(geom)) AS lng,
                    (SELECT a.ir FROM ingest.advisory_ir a WHERE a.ir_id = z.ir_id) AS ir
             FROM geo.zone_of_avoidance z
             WHERE city_id = %s AND status = ANY(%s) AND valid_to > now()
@@ -293,8 +395,52 @@ def get_zones(bbox: Annotated[str, Query(description="min_lng,min_lat,max_lng,ma
             """,
             (CITY_ID, list(statuses), minx, miny, maxx, maxy),
         ).fetchall()
+    for r in rows:
+        r["where"] = briefmod._where(r["ir"], r["zone_id"])
+        r["until"] = briefmod._clock(r["valid_to"])
     return {"type": "FeatureCollection",
             "features": [{"type": "Feature", "geometry": r.pop("geometry"), "properties": r} for r in rows]}
+
+
+@app.get("/v1/zones/active")
+def zones_active():
+    """Every active zone in the city as a short list: what, where, since when, until when, and a point to look at."""
+    with conn() as c:
+        rows = c.execute(
+            """
+            SELECT z.zone_id, z.cause, z.status, z.origin, z.created_at, z.valid_to,
+                   ST_Y(ST_PointOnSurface(z.geom)) AS lat, ST_X(ST_PointOnSurface(z.geom)) AS lng,
+                   (SELECT a.ir FROM ingest.advisory_ir a WHERE a.ir_id = z.ir_id) AS ir
+            FROM geo.zone_of_avoidance z
+            WHERE z.city_id = %s AND z.status IN ('ACTIVE','DECAYING') AND z.valid_to > now()
+            ORDER BY z.created_at DESC LIMIT 200
+            """, (CITY_ID,)).fetchall()
+    city = _city()
+    return {"city": city["name"], "center": city["center"],
+            "zones": [{"zone_id": r["zone_id"], "cause": r["cause"], "status": r["status"], "origin": r["origin"], "created_at": r["created_at"],
+                       "valid_to": r["valid_to"], "until": briefmod._clock(r["valid_to"]), "where": briefmod._where(r["ir"], r["zone_id"]),
+                       "lat": r["lat"], "lng": r["lng"]} for r in rows]}
+
+
+@app.get("/v1/reports")
+def reports_recent(hours: int = Query(6, ge=1, le=48)):
+    """Recent crowd reports for the map: what, where, and whether anyone has confirmed it. No reporter details."""
+    with conn() as c:
+        rows = c.execute(
+            """
+            SELECT r.report_id, r.kind, r.outcome, r.created_at, r.zone_id, ST_Y(r.geom) AS lat, ST_X(r.geom) AS lng, z.status AS zone_status
+            FROM client.report r LEFT JOIN geo.zone_of_avoidance z USING (zone_id)
+            WHERE r.created_at > now() - make_interval(hours => %s) AND r.outcome IN ('PENDING','CONFIRMED')
+              AND (z.zone_id IS NULL OR (z.status IN ('ACTIVE','DECAYING','CANDIDATE') AND z.valid_to > now()))
+            ORDER BY r.created_at DESC LIMIT 300
+            """, (hours,)).fetchall()
+    return {"reports": rows}
+
+
+@app.get("/waze")
+def waze_page():
+    """Waze's own Live Map beside the list of DetourAI zones, for timing who showed a closure first."""
+    return FileResponse(STATIC / "waze.html")
 
 
 class ZoneStatusIn(BaseModel):
@@ -644,12 +790,15 @@ def telegram_webhook(update: Annotated[dict, Body()], x_telegram_bot_api_secret_
 
 @app.get("/r/{token}")
 def short_link(token: str):
-    """Opens the stored Google Maps link. Only links this server generated can be reached, and only to Google Maps."""
+    """Opens the stored navigation link. Only links this server generated can be reached, and only to Google Maps
+    directions or Waze's navigation address; the open is recorded against the alert."""
     with conn() as c:
         row = c.execute("SELECT target_url FROM client.short_link WHERE token = %s AND expires_at > now()", (token,)).fetchone()
-        if row is None or not row["target_url"].startswith("https://www.google.com/maps/"):
+        kind = maps.redirect_kind(row["target_url"], PUBLIC_BASE_URL) if row else None
+        if kind is None:
             raise HTTPException(404, "link not found or expired")
-        c.execute("UPDATE client.alert_sent SET opened_at = COALESCE(opened_at, now()) WHERE token = %s", (token,))
+        c.execute("UPDATE client.alert_sent SET opened_at = COALESCE(opened_at, now()), opened_in = COALESCE(opened_in, %s) "
+                  "WHERE token = %s OR waze_token = %s OR card_token = %s", (kind, token, token, token))
         c.commit()
     return RedirectResponse(row["target_url"], status_code=302)
 
@@ -661,7 +810,9 @@ def channels():
         subs = c.execute("SELECT channel, count(*) FILTER (WHERE stopped_at IS NULL) AS active, count(*) FILTER (WHERE stopped_at IS NOT NULL) AS stopped "
                          "FROM client.subscriber GROUP BY channel").fetchall()
         box = c.execute("SELECT channel, status, count(*) AS n FROM client.outbox WHERE created_at > now() - INTERVAL '24 hours' GROUP BY channel, status").fetchall()
-        opened = c.execute("SELECT count(*) FILTER (WHERE opened_at IS NOT NULL) AS opened, count(*) AS sent FROM client.alert_sent WHERE sent_at > now() - INTERVAL '24 hours'").fetchone()
+        opened = c.execute("SELECT count(*) FILTER (WHERE opened_at IS NOT NULL) AS opened, count(*) FILTER (WHERE opened_in = 'waze') AS in_waze, "
+                           "count(*) FILTER (WHERE opened_in = 'card') AS in_card, "
+                           "count(*) AS sent FROM client.alert_sent WHERE sent_at > now() - INTERVAL '24 hours'").fetchone()
     by = {r["channel"]: {"active": r["active"], "stopped": r["stopped"]} for r in subs}
     day: dict[str, dict[str, int]] = {}
     for r in box:
@@ -671,7 +822,7 @@ def channels():
                      **by.get("WHATSAPP", {"active": 0, "stopped": 0}), "last_24h": day.get("WHATSAPP", {})},
         "telegram": {"configured": telegram.configured(), **by.get("TELEGRAM", {"active": 0, "stopped": 0}), "last_24h": day.get("TELEGRAM", {})},
         "sms": {"provider": SMS_PROVIDER or None, "configured": sms.configured(), "last_24h": day.get("SMS", {})},
-        "links": {"short_links": bool(PUBLIC_BASE_URL), "alerts_sent": opened["sent"], "opened": opened["opened"]},
+        "links": {"short_links": bool(PUBLIC_BASE_URL), "alerts_sent": opened["sent"], "opened": opened["opened"], "opened_in_waze": opened["in_waze"], "opened_live_route": opened["in_card"]},
     }
 
 
@@ -700,3 +851,164 @@ def cifs_preview():
         zones_active = c.execute("SELECT count(*) AS n FROM geo.zone_of_avoidance WHERE city_id = %s AND status = 'ACTIVE' AND valid_to > now()", (CITY_ID,)).fetchone()["n"]
     return {"incidents": len(incidents), "closures": sum(1 for i in incidents if i["type"] == "ROAD_CLOSED"), "active_zones": zones_active,
             "min_confidence": cifs.CIFS_MIN_CONFIDENCE, "skipped": skipped, "sample": incidents[:5]}
+
+
+# ---------------------------------------------------------------- subscriber trips: the live route page
+
+ICON_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="96" fill="#F2B705"/>'
+            '<path d="M120 400V272a88 88 0 0 1 88-88h112v-72l112 112-112 112v-72H208a8 8 0 0 0-8 8v128z" fill="#1E1A05"/></svg>')
+
+
+class TripReportIn(BaseModel):
+    kind: str = Field(pattern="^(WATER|CLOSED|ACCIDENT)$")
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+
+class TripConfirmIn(BaseModel):
+    zone_id: int
+    yes: bool
+
+
+def _trip_or_404(c, token: str) -> dict:
+    t = packs._trip(c, token) if packs.valid_token(token) else None
+    if t is None:
+        raise HTTPException(404, "trip not found")
+    return t
+
+
+@app.get("/app-icon.svg")
+def app_icon():
+    return Response(ICON_SVG, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/go/{token}")
+def trip_page(token: str):
+    """A subscriber's own live route: guidance, re-routing, reporting. The token in the link is the only key."""
+    if not packs.valid_token(token):
+        raise HTTPException(404, "trip not found")
+    return FileResponse(STATIC / "card.html")
+
+
+@app.get("/go/{token}/manifest.webmanifest")
+def trip_manifest(token: str):
+    """Lets the phone add this trip to the home screen and open it full-screen, like an app."""
+    if not packs.valid_token(token):
+        raise HTTPException(404, "trip not found")
+    return Response(json.dumps({
+        "name": "DetourAI live route", "short_name": "DetourAI", "start_url": f"/go/{token}", "scope": f"/go/{token}", "display": "standalone",
+        "background_color": "#2B2F33", "theme_color": "#2B2F33",
+        "icons": [{"src": "/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}]}), media_type="application/manifest+json")
+
+
+@app.get("/v1/trips/{token}")
+def trip_pack(token: str, rebuild: bool = False):
+    try:
+        return packs.trip_get(token, rebuild)
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from None
+    except (ValueError, routing.NoRoute) as e:
+        raise HTTPException(409, str(e)) from None
+
+
+@app.get("/v1/trips/{token}/status")
+def trip_status(token: str):
+    try:
+        return packs.trip_status(token)
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from None
+
+
+@app.post("/v1/trips/{token}/report")
+def trip_report(token: str, body: TripReportIn):
+    """One tap on the live route page: what the person sees, at the phone's position. Same rules as REPORT in chat."""
+    from .channels import reports
+    with conn() as c:
+        t = _trip_or_404(c, token)
+        res = reports.create(c, t["sub_id"], body.kind, body.lat, body.lng)
+        c.commit()
+    return {"ok": res["ok"], "reason": res.get("reason"), "merged": res.get("merged", False), "road": res.get("road")}
+
+
+@app.post("/v1/trips/{token}/confirm")
+def trip_confirm(token: str, body: TripConfirmIn):
+    """'Still blocked?' answered on the page. Counts only when this trip's corridor passes the zone."""
+    from .channels import reports
+    with conn() as c:
+        t = _trip_or_404(c, token)
+        passes = c.execute(
+            "SELECT 1 AS ok FROM client.corridor k JOIN geo.zone_of_avoidance z ON z.zone_id = %s AND k.cells_r9 && z.h3_cover_r9 WHERE k.corr_id = %s",
+            (body.zone_id, t["corr_id"])).fetchone()
+        if not passes:
+            return {"counted": False}
+        c.execute("INSERT INTO client.zone_check (sub_id, zone_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (t["sub_id"], body.zone_id))
+        res = reports.vote(c, body.zone_id, t["sub_id"], body.yes)
+        c.commit()
+    return {"counted": res["effect"] != "IGNORED", "status": res["status"]}
+
+
+# ---------------------------------------------------------------- riders correct the route; a new way from here
+
+class TripFeedbackIn(BaseModel):
+    kind: str = Field(pattern="^(BLOCKED|GATE_CLOSED|TOO_NARROW|NO_ENTRY|CHOICE)$")
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+
+def _avoid(avoid: str | None) -> list[int]:
+    return [int(x) for x in (avoid or "").split(",") if x.strip().isdigit()][:20]
+
+
+@app.post("/v1/trips/{token}/feedback")
+def trip_feedback(token: str, body: TripFeedbackIn):
+    """What was wrong with the route, at the phone's position. 'Blocked' also becomes a road report; the rest wait for
+    an operator. The answer names the stretch so the person's next route can avoid it at once."""
+    from .channels import reports
+    with conn() as c:
+        t = _trip_or_404(c, token)
+        res = feedback.record(c, t["sub_id"], body.kind, packs.TRIP_PROFILE.get(t["profile"], "2W"), body.lat, body.lng)
+        if res["ok"] and body.kind == "BLOCKED":
+            reports.create(c, t["sub_id"], "CLOSED", body.lat, body.lng)
+            c.commit()
+    return res
+
+
+@app.get("/v1/trips/{token}/reroute")
+def trip_reroute(token: str, lat: float = Query(..., ge=-90, le=90), lng: float = Query(..., ge=-180, le=180), avoid: str | None = None):
+    try:
+        return packs.trip_reroute(token, (lat, lng), _avoid(avoid))
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from None
+    except (ValueError, routing.NoRoute) as e:
+        raise HTTPException(409, str(e)) from None
+
+
+@app.get("/v1/packs/{route_id}/reroute")
+def pack_reroute(route_id: int, lat: float = Query(..., ge=-90, le=90), lng: float = Query(..., ge=-180, le=180), avoid: str | None = None):
+    try:
+        return packs.team_reroute(route_id, (lat, lng), _avoid(avoid))
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from None
+    except (ValueError, routing.NoRoute) as e:
+        raise HTTPException(409, str(e)) from None
+
+
+class CorrectionIn(BaseModel):
+    osm_way_id: int
+    seg: int
+    kind: str = Field(pattern="^(GATE_CLOSED|TOO_NARROW|NO_ENTRY)$")
+    action: str = Field(pattern="^(apply|dismiss)$")
+
+
+@app.get("/v1/corrections")
+def corrections():
+    """What riders say is wrong with the map, grouped by road stretch, with what applying each would do."""
+    with conn() as c:
+        return {"corrections": feedback.open_corrections(c)}
+
+
+@app.post("/v1/corrections")
+def correction_close(body: CorrectionIn, x_admin_token: Annotated[str | None, Header()] = None):
+    _admin(x_admin_token)
+    with conn() as c:
+        return feedback.close(c, body.osm_way_id, body.seg, body.kind, body.action)

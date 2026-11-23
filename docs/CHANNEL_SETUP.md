@@ -83,6 +83,8 @@ account; check the first send in their dashboard.
   At most four alerts per person in 20 hours, one per zone.
 - When that zone is refuted or expires, the same people get one cleared message.
 - A WhatsApp alert with no delivery receipt after 60 seconds goes out again as an SMS that can be followed on its own.
+- Alerts open DetourAI's own live route first (`/go/<token>`), with Google Maps and Waze as short links; ROUTE in chat
+  sends the person their links. Both need `PUBLIC_BASE_URL`.
 - REPORT lets a subscriber pin water, a closed road or an accident; people on that road are asked once to confirm, and
   people who were alerted are asked once, 20 minutes later, whether it is still blocked.
 - STOP, START, SHOW, RESET, DELETE and HELP work at any point. DELETE removes the subscriber, corridors, alerts and outbox rows.

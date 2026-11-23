@@ -47,10 +47,12 @@ jobs:
           docker run --rm -v $PWD/verify/work:/data $OSRM_IMAGE osrm-partition /data/city.osrm
           docker run --rm -v $PWD/verify/work:/data $OSRM_IMAGE osrm-customize /data/city.osrm
           docker run -d --name detour-osrm --network detourai_default -v $PWD/verify/work:/data $OSRM_IMAGE osrm-routed --algorithm mld /data/city.osrm
-      - name: Reports, answers, trust and the feed against the database
+      - name: Reports, trips and rider corrections against the database
         run: |
           pip install -q -r requirements-dev.txt
-          DETOUR_DB=$DB_URL_HOST python -m pytest -m db tests/integration/test_reports_db.py
+          DETOUR_DB=$DB_URL_HOST python -m pytest -m db tests/integration
+          # one accepted rider correction on the disconnected island: no route changes, and the rebuild must put it back
+          psql -h 127.0.0.1 -U detour -d detour -c "INSERT INTO net.correction (osm_way_id, seg, kind, deny_mask) SELECT osm_way_id, seg, 'NO_ENTRY', 12 FROM net.edge WHERE name = 'Island Road' ORDER BY seg LIMIT 1; SELECT net.apply_corrections();"
       - name: Verify, then check the verifier caught every planted fault
         run: |
           python3 verify/fixtures/make_synthetic_inputs.py verify/inputs

@@ -395,7 +395,7 @@
       "op": "==",
       "threshold": 0,
       "estimate": false,
-      "why": "re-applying must not change tables, columns, indexes, functions or seed rows"
+      "why": "re-applying must not change tables, columns, indexes, functions, seed rows, or the road network's edges and vehicle masks"
     },
     {
       "id": "I03",
@@ -504,6 +504,15 @@
       "threshold": 0,
       "estimate": false,
       "why": "every report's zone lies within 40 m of the pin the reporter shared"
+    },
+    {
+      "id": "I08",
+      "group": "idempotency",
+      "metric": "rider_corrections_lost_by_rebuild",
+      "op": "==",
+      "threshold": 0,
+      "estimate": false,
+      "why": "width and no-entry corrections an operator accepted are back on the edges after the network is rebuilt"
     }
   ]
 }

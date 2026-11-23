@@ -2,7 +2,7 @@
 import math
 from urllib.parse import parse_qs, urlparse
 
-from app.maps import maps_url, waypoints, waze_url
+from app.maps import maps_url, redirect_kind, waypoints, waze_url
 
 
 def edges(spec):
@@ -41,3 +41,11 @@ def test_waze_link_is_destination_only():
     u = waze_url((17.4126, 78.4480))
     assert u == "https://waze.com/ul?ll=17.41260%2C78.44800&navigate=yes&utm_source=detourai"
     assert "waypoint" not in u
+
+
+def test_short_links_lead_only_to_google_maps_directions_or_waze_navigation():
+    assert redirect_kind(maps_url("2W", (17.4126, 78.4480), [])) == "maps"
+    assert redirect_kind(waze_url((17.4126, 78.4480))) == "waze"
+    for bad in ("https://evil.example/https://www.google.com/maps/", "http://www.google.com/maps/dir/", "https://www.google.com.evil.example/maps/",
+                "https://waze.com.evil.example/ul?ll=1,2", "https://waze.com/live-map", "javascript:alert(1)", ""):
+        assert redirect_kind(bad) is None, bad

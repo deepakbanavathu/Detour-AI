@@ -99,15 +99,15 @@ Measure the narrowest clear width between fixed obstacles with a tape and take a
 
 ## 3. Running it
 
-Once, if not done yet (from the repo folder, in Command Prompt):
+Once (from the repo folder, in Command Prompt):
 
 ```
-copy .env.example .env
-curl -L -o data\southern-zone-latest.osm.pbf https://download.geofabrik.de/asia/india/southern-zone-latest.osm.pbf
-docker compose -p detourai up -d --build db
-docker compose -p detourai exec db bash /migrate.sh
-docker run --rm --network detourai_default -v "%cd%":/work -w /work -e DATABASE_URL=postgresql://detour:detour@db:5432/detour debian:trixie bash -c "apt-get update -qq && apt-get install -y -qq osmium-tool osm2pgsql postgresql-client >/dev/null && bash import/import_osm.sh data/southern-zone-latest.osm.pbf"
+import\import.bat
 ```
+
+It creates `.env` if missing, downloads the map (about 560 MB), starts the database, creates the tables, imports the
+city and starts the API. It reads the database password from `.env`, and it refuses to start a second import while one
+is running. On the full city the import takes 20 to 60 minutes.
 
 Then every time:
 

@@ -103,7 +103,8 @@ def one(c, sql, params=None):
 
 
 def http() -> httpx.Client:
-    return httpx.Client(base_url=API, timeout=120)
+    # the API needs a signed-in session or the admin token for everything that is not public by design
+    return httpx.Client(base_url=API, timeout=120, headers={"X-Admin-Token": ADMIN} if ADMIN else {})
 
 
 # ------------------------------------------------------------------------------------------------ meta
@@ -708,9 +709,16 @@ def latency(c, rep: Report, warm_ms: list[int]):
             for p in ps:
                 for v in p["vehicles"]:
                     t0 = time.perf_counter()
-                    r = h.get("/v1/route", params={"profile": v, "from": p["from"], "to": p["to"]})
+                    # fresh=1: time the real search, not the route cache
+                    r = h.get("/v1/route", params={"profile": v, "from": p["from"], "to": p["to"], "fresh": "1"})
                     if r.status_code == 200:
                         ms.append((time.perf_counter() - t0) * 1000)
+        remembered = []
+        for p in ps:                                 # the same requests again, now allowed to come from memory
+            for v in p["vehicles"]:
+                t0 = time.perf_counter()
+                if h.get("/v1/route", params={"profile": v, "from": p["from"], "to": p["to"]}).status_code == 200:
+                    remembered.append((time.perf_counter() - t0) * 1000)
     if not ms:
         rep.skip("L01", "no route succeeded")
         rep.skip("L02", "no route succeeded")
@@ -727,7 +735,9 @@ def latency(c, rep: Report, warm_ms: list[int]):
         rep.detail("pg_stat_statements_top", top)
     else:
         rep.skip("L03", "pg_stat_statements not loaded (shared_preload_libraries)")
-    rep.detail("latency_ms", {"samples": len(ms), "first_pass_ms": warm_ms})
+    rep.detail("latency_ms", {"samples": len(ms), "first_pass_ms": warm_ms,
+                              "remembered_p50_ms": round(statistics.median(remembered), 1) if remembered else None,
+                              "note": "L01 to L03 time the real search (fresh=1); remembered_p50_ms is a repeat request answered from the route cache"})
 
 
 # ------------------------------------------------------------------------------------------------ idempotency
@@ -767,6 +777,7 @@ def _sql_file(path: Path) -> str:
 def idempotency(c, rep: Report, reimport: bool):
     print("\n[idempotency] migrations and the import, run a second time")
     before = one(c, _SCHEMA_FP)["fp"]
+    net_before = one(c, _NET_FP)
     errors = []
     has_ts = bool(one(c, "SELECT 1 x FROM pg_extension WHERE extname = 'timescaledb'"))
     with psycopg.connect(DB) as tx:
@@ -781,13 +792,17 @@ def idempotency(c, rep: Report, reimport: bool):
                 tx.rollback()
                 errors.append({"file": f.name, "error": str(e).splitlines()[0][:200]})
     rep.check("I01", len(errors), "migration SQL is not idempotent: see the file and statement", errors)
-    rep.check("I02", int(one(c, _SCHEMA_FP)["fp"] != before), "a migration re-creates or re-seeds on a second run")
+    net_after = one(c, _NET_FP)
+    rep.check("I02", int(one(c, _SCHEMA_FP)["fp"] != before) + int(net_after != net_before),
+              "a migration re-creates or re-seeds on a second run" if net_after == net_before
+              else "a migration recomputes edge masks and loses state on the way (for example corrections an operator accepted)",
+              {"network_before": net_before, "network_after": net_after})
     if not reimport:
-        for cid in ("I03", "I04", "I05"):
+        for cid in ("I03", "I04", "I05", "I08"):
             rep.skip(cid, "--skip-reimport")
         return
     if not one(c, "SELECT count(*) n FROM osm.highway")["n"]:
-        for cid in ("I03", "I04", "I05"):
+        for cid in ("I03", "I04", "I05", "I08"):
             rep.skip(cid, "osm.highway is empty")
         return
     n1, g1, h1 = one(c, _NET_FP), one(c, _GAZ_FP), one(c, _HISTORY)
@@ -802,6 +817,11 @@ def idempotency(c, rep: Report, reimport: bool):
     lost = sum(max(0, h1[k] - h2[k]) for k in ("gates", "sinks", "hpvse")) + h2["stale_cut_refs"]
     rep.check("I05", lost, "import: build_network.sql dropped rows that reference nodes, or left gate cut sets pointing at old edge ids",
               {"before": h1, "after": h2})
+    if one(c, "SELECT to_regproc('net.corrections_unapplied') IS NOT NULL AS ok")["ok"]:
+        rep.check("I08", one(c, "SELECT net.corrections_unapplied() AS n")["n"],
+                  "import: build_network.sql did not call net.apply_corrections() after computing the masks")
+    else:
+        rep.skip("I08", "migration 017 not applied")
     rep.detail("reimport_seconds", round(time.time() - t0))
 
 

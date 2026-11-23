@@ -70,3 +70,17 @@ def waze_url(dest: tuple[float, float]) -> str:
     """Opens Waze navigating to the destination. Waze takes one destination and no waypoints, so it chooses its own
     route: offer it as a second button, never as the carrier of DetourAI's detour."""
     return f"https://waze.com/ul?ll={dest[0]:.5f}%2C{dest[1]:.5f}&navigate=yes&utm_source=detourai"
+
+
+# The only places a short link may lead. Anything else stored in the table is refused at redirect time.
+REDIRECT_PREFIXES = {"maps": "https://www.google.com/maps/", "waze": "https://waze.com/ul?"}
+
+
+def redirect_kind(url: str, public_base: str = "") -> str | None:
+    """'maps', 'waze', or 'card' (this server's own live route page) when the short link may redirect there, else None."""
+    if public_base and url.startswith(public_base.rstrip("/") + "/go/"):
+        return "card"
+    for kind, prefix in REDIRECT_PREFIXES.items():
+        if url.startswith(prefix):
+            return kind
+    return None
